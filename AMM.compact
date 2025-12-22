@@ -1,0 +1,313 @@
+pragma language_version >= 0.17.0;
+
+import CompactStandardLibrary;
+
+// -----------------------------------------------------------------------------
+// Constant Product AMM (XY = K) for two fungible tokens
+// -----------------------------------------------------------------------------
+
+// Initialization flag
+export ledger _isInitialized: Boolean;
+
+// Pool configuration
+// Swap fee in basis points (e.g. 30 = 0.30%)
+export sealed ledger _feeBps: Uint<16>;
+
+// Pool reserves (public, pool-owned balances)
+export ledger _reserveX: Uint<128>;
+export ledger _reserveY: Uint<128>;
+
+// LP token accounting
+export ledger _lpTotalSupply: Uint<128>;
+export ledger _lpBalances: Map<Either<ZswapCoinPublicKey, ContractAddress>, Uint<128>>;
+
+// Constants
+const MAX_UINT128 = 340282366920938463463374607431768211455 as Uint<128>;
+const FEE_DENOM = 10000 as Uint<128>; // basis points denominator
+
+// -----------------------------------------------------------------------------
+// Initialization
+// -----------------------------------------------------------------------------
+
+// One-time initialization: sets fee and zeroes state
+export circuit initialize(feeBps_: Uint<16>): [] {
+    assert(!_isInitialized, "Already initialized");
+
+    // Fee must be less than 100% (10000 bps)
+    const MAX_FEE = 10000 as Uint<16>;
+    assert(feeBps_ < MAX_FEE, "Fee too high");
+
+    _isInitialized = disclose(true);
+    _feeBps = disclose(feeBps_);
+
+    _reserveX = disclose(0 as Uint<128>);
+    _reserveY = disclose(0 as Uint<128>);
+    _lpTotalSupply = disclose(0 as Uint<128>);
+}
+
+// Optional: constructor with default 0.30% fee (30 bps)
+/*
+circuit constructor(): [] {
+    initialize(30 as Uint<16>);
+}
+*/
+
+// -----------------------------------------------------------------------------
+// View helpers
+// -----------------------------------------------------------------------------
+
+// Returns current reserves (public)
+export circuit getReserves(): [Uint<128>, Uint<128>] {
+    assert(_isInitialized, "Not initialized");
+    return [_reserveX, _reserveY];
+}
+
+// Returns total LP token supply
+export circuit lpTotalSupply(): Uint<128> {
+    assert(_isInitialized, "Not initialized");
+    return _lpTotalSupply;
+}
+
+// Returns LP balance of an account
+export circuit lpBalanceOf(
+    account: Either<ZswapCoinPublicKey, ContractAddress>
+): Uint<128> {
+    assert(_isInitialized, "Not initialized");
+    return _getLPBalance(account);
+}
+
+// -----------------------------------------------------------------------------
+// Public entrypoints
+// -----------------------------------------------------------------------------
+
+// Add liquidity to the pool.
+// Caller must have already escrowed `amountX` & `amountY` into the pool
+// (off-contract, or via a separate token/escrow contract).
+// Returns LP tokens minted.
+export circuit addLiquidity(
+    amountX: Uint<128>,
+    amountY: Uint<128>
+): Uint<128> {
+    assert(_isInitialized, "Not initialized");
+    assert(amountX > 0 && amountY > 0, "Zero liquidity");
+
+    const provider =
+        left<ZswapCoinPublicKey, ContractAddress>(ownPublicKey());
+
+    const totalSupply = _lpTotalSupply;
+    const reserveX = _reserveX;
+    const reserveY = _reserveY;
+
+    let liquidity: Uint<128>;
+
+    if (totalSupply == 0) {
+        // First LP: define initial share rule.
+        // Here we simply set liquidity = amountX.
+        // (You could implement sqrt(amountX * amountY) if you have sqrt.)
+        liquidity = amountX;
+    } else {
+        // Subsequent LPs: proportional to existing reserves
+        // liquidityX = amountX * totalSupply / reserveX
+        // liquidityY = amountY * totalSupply / reserveY
+        assert(reserveX > 0 && reserveY > 0, "Empty reserves");
+
+        const liquidityX = safeMul(amountX, totalSupply) / reserveX;
+        const liquidityY = safeMul(amountY, totalSupply) / reserveY;
+
+        // Mint the minimum of the two to avoid changing pool price
+        liquidity = minUint128(liquidityX, liquidityY);
+    }
+
+    assert(liquidity > 0, "Insufficient liquidity minted");
+
+    // Update reserves
+    const newReserveX = safeAdd(reserveX, amountX);
+    const newReserveY = safeAdd(reserveY, amountY);
+
+    _reserveX = disclose(newReserveX);
+    _reserveY = disclose(newReserveY);
+
+    // Mint LP tokens to provider
+    const providerBal = _getLPBalance(provider);
+    const newProviderBal = safeAdd(providerBal, liquidity);
+    const newTotalSupply = safeAdd(totalSupply, liquidity);
+
+    _lpBalances.insert(disclose(provider), disclose(newProviderBal));
+    _lpTotalSupply = disclose(newTotalSupply);
+
+    return liquidity;
+}
+
+// Remove liquidity: burns LP tokens and returns underlying.
+// Returns [amountX, amountY] withdrawn for the burned LP amount.
+export circuit removeLiquidity(
+    lpAmount: Uint<128>
+): [Uint<128>, Uint<128>] {
+    assert(_isInitialized, "Not initialized");
+    assert(lpAmount > 0, "Zero burn");
+
+    const provider =
+        left<ZswapCoinPublicKey, ContractAddress>(ownPublicKey());
+
+    const totalSupply = _lpTotalSupply;
+    assert(totalSupply > 0, "No LP supply");
+
+    const providerBal = _getLPBalance(provider);
+    assert(providerBal >= lpAmount, "Insufficient LP balance");
+
+    const reserveX = _reserveX;
+    const reserveY = _reserveY;
+
+    // amountX = reserveX * lpAmount / totalSupply
+    // amountY = reserveY * lpAmount / totalSupply
+    const amountX = safeMul(reserveX, lpAmount) / totalSupply;
+    const amountY = safeMul(reserveY, lpAmount) / totalSupply;
+
+    assert(amountX > 0 || amountY > 0, "Zero withdrawal");
+
+    // Update LP accounting
+    const newProviderBal = safeSub(providerBal, lpAmount);
+    const newTotalSupply = safeSub(totalSupply, lpAmount);
+
+    _lpBalances.insert(disclose(provider), disclose(newProviderBal));
+    _lpTotalSupply = disclose(newTotalSupply);
+
+    // Update reserves (pool sends out amountX/amountY)
+    const newReserveX = safeSub(reserveX, amountX);
+    const newReserveY = safeSub(reserveY, amountY);
+
+    _reserveX = disclose(newReserveX);
+    _reserveY = disclose(newReserveY);
+
+    // NOTE: actual token transfers to provider must be handled externally.
+    return [amountX, amountY];
+}
+
+// Swap token X for token Y using constant product invariant.
+//
+// Caller provides:
+//   - amountIn: amount of X entering the pool
+//   - minAmountOut: slippage protection on Y out
+//
+// Returns actual amountOut of Y.
+export circuit swapXForY(
+    amountIn: Uint<128>,
+    minAmountOut: Uint<128>
+): Uint<128> {
+    assert(_isInitialized, "Not initialized");
+    assert(amountIn > 0, "Zero input");
+
+    const reserveX = _reserveX;
+    const reserveY = _reserveY;
+    assert(reserveX > 0 && reserveY > 0, "Empty pool");
+
+    // Fee math
+    const feeBps128 = (_feeBps as Uint<128>);
+    const feeFactor = FEE_DENOM - feeBps128; // e.g. 10000 - 30 = 9970
+
+    // amountInWithFee = amountIn * (FEE_DENOM - feeBps) / FEE_DENOM
+    const amountInWithFee =
+        safeMul(amountIn, feeFactor) / FEE_DENOM;
+
+    // Constant product: k = reserveX * reserveY
+    const k = safeMul(reserveX, reserveY);
+
+    // New reserve after input
+    const newReserveX = safeAdd(reserveX, amountInWithFee);
+    assert(newReserveX > 0, "Invalid new reserve");
+
+    // newReserveY = k / newReserveX  (integer division)
+    const newReserveY = k / newReserveX;
+    assert(newReserveY < reserveY, "No output");
+
+    // Amount out is the reduction in Y reserve
+    const amountOut = safeSub(reserveY, newReserveY);
+    assert(amountOut >= minAmountOut, "Slippage too high");
+
+    // Update reserves
+    _reserveX = disclose(newReserveX);
+    _reserveY = disclose(newReserveY);
+
+    // NOTE: Caller must actually provide amountIn of X and receive amountOut of Y
+    // via off-contract mechanisms (e.g., escrow + settlement).
+    return amountOut;
+}
+
+// Swap token Y for token X (mirror of swapXForY).
+export circuit swapYForX(
+    amountIn: Uint<128>,
+    minAmountOut: Uint<128>
+): Uint<128> {
+    assert(_isInitialized, "Not initialized");
+    assert(amountIn > 0, "Zero input");
+
+    const reserveX = _reserveX;
+    const reserveY = _reserveY;
+    assert(reserveX > 0 && reserveY > 0, "Empty pool");
+
+    const feeBps128 = (_feeBps as Uint<128>);
+    const feeFactor = FEE_DENOM - feeBps128;
+
+    const amountInWithFee =
+        safeMul(amountIn, feeFactor) / FEE_DENOM;
+
+    const k = safeMul(reserveX, reserveY);
+
+    const newReserveY = safeAdd(reserveY, amountInWithFee);
+    assert(newReserveY > 0, "Invalid new reserve");
+
+    const newReserveX = k / newReserveY;
+    assert(newReserveX < reserveX, "No output");
+
+    const amountOut = safeSub(reserveX, newReserveX);
+    assert(amountOut >= minAmountOut, "Slippage too high");
+
+    _reserveX = disclose(newReserveX);
+    _reserveY = disclose(newReserveY);
+
+    // As above: actual token movements happen outside this contract.
+    return amountOut;
+}
+
+// -----------------------------------------------------------------------------
+// Internal helpers
+// -----------------------------------------------------------------------------
+
+// Safe addition with overflow check
+circuit safeAdd(a: Uint<128>, b: Uint<128>): Uint<128> {
+    assert(a <= MAX_UINT128 - b, "Addition overflow");
+    return a + b;
+}
+
+// Safe subtraction with underflow check
+circuit safeSub(a: Uint<128>, b: Uint<128>): Uint<128> {
+    assert(a >= b, "Subtraction underflow");
+    return a - b;
+}
+
+// Safe multiplication with overflow check
+circuit safeMul(a: Uint<128>, b: Uint<128>): Uint<128> {
+    if (a == 0 || b == 0) {
+        return 0;
+    }
+    assert(a <= MAX_UINT128 / b, "Multiplication overflow");
+    return a * b;
+}
+
+// Minimum of two Uint<128>
+circuit minUint128(a: Uint<128>, b: Uint<128>): Uint<128> {
+    if (a <= b) {
+        return a;
+    }
+    return b;
+}
+
+// Get LP balance (returns 0 if not present)
+circuit _getLPBalance(
+    account: Either<ZswapCoinPublicKey, ContractAddress>
+): Uint<128> {
+    if (!_lpBalances.member(disclose(account))) {
+        return 0;
+    }
+    return _lpBalances.lookup(disclose(account));
+}
