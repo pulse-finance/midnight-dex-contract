@@ -7,7 +7,8 @@ const dummyTxSender = "0".repeat(64)
 export class Simulator {
     private contract: Contract<unknown, {}>;
     readonly address: string;
-    private circuitContext: CircuitContext<unknown>;
+    private circuitContext: CircuitContext<unknown>
+    lpReserves: EncodedQualifiedCoinInfo
     xReserves: EncodedQualifiedCoinInfo
     yReserves: EncodedQualifiedCoinInfo
 
@@ -44,6 +45,13 @@ export class Simulator {
             )
         }
 
+        this.lpReserves = {
+            nonce: new Uint8Array(32),
+            color: this.contract.circuits.getLPTokenColor(this.circuitContext).result, // TODO: how to determine LP token color?
+            value: 0n,
+            mt_index: 0n
+        }
+
         this.xReserves = {
             nonce: new Uint8Array(32),
             color: xColor,
@@ -59,16 +67,14 @@ export class Simulator {
         }
     }
 
- 
-
-    getFee(): bigint {
-        const { result } = this.contract.circuits.getFee(this.circuitContext)
+    getFeeBps(): bigint {
+        const { result } = this.contract.circuits.getFeeBps(this.circuitContext)
 
         return result
     }
 
-    getLPSupply(): bigint {
-        const { result } = this.contract.circuits.getLPSupply(this.circuitContext)
+    getLPCirculatingSupply(): bigint {
+        const { result } = this.contract.circuits.getLPCirculatingSupply(this.circuitContext)
 
         return result
     }
@@ -85,6 +91,12 @@ export class Simulator {
         return result
     }
 
+    getXRewards(): bigint {
+        const { result } = this.contract.circuits.getXRewards(this.circuitContext)
+
+        return result
+    }
+
     getYColor(): Uint8Array {
         const { result } = this.contract.circuits.getYColor(this.circuitContext)
 
@@ -97,45 +109,149 @@ export class Simulator {
         return result
     }
 
-    initLiquidity({xIn, yIn, recipient, lpMinted}: {xIn: bigint, yIn: bigint, recipient: Address, lpMinted?: bigint}) {
-        lpMinted = lpMinted ?? BigInt(Math.round(Math.sqrt(Number(xIn)*Number(yIn))))
+    initLiquidity({xIn, yIn, lpOut}: {xIn: bigint, yIn: bigint, lpOut?: bigint}) {
+        const userDefinedLPOut = !!lpOut
 
-        const { context } = this.contract.circuits.initLiquidity(this.circuitContext, xIn, yIn, lpMinted, recipient)
+        lpOut = lpOut ?? BigInt(Math.round(Math.sqrt(Number(xIn)*Number(yIn))))
 
-        this.syncCircuitContext(context)
-    }
+        if (!userDefinedLPOut) {
+            while(lpOut*lpOut > xIn*yIn) {
+                lpOut -= 1n
+            }
+        }
 
-    addLiquidity({xIn, yIn, recipient, lpMinted}: {xIn: bigint, yIn: bigint, recipient: Address, lpMinted?: bigint}) {
-        lpMinted = lpMinted ?? BigInt(Math.round(Math.sqrt(Number(xIn)*Number(yIn))))
-
-        const { context } = this.contract.circuits.addLiquidity(
+        const { context } = this.contract.circuits.initLiquidity(
             this.circuitContext, 
-            this.xReserves,
-            this.yReserves,
+            this.lpReserves,
             xIn, 
             yIn, 
-            lpMinted, 
-            recipient
+            lpOut
         )
 
         this.syncCircuitContext(context)
     }
 
-    removeLiquidity({lpBurned, xOut, yOut, recipient}: {lpBurned: bigint, xOut: bigint, yOut: bigint, recipient: Address}) {
+    addLiquidity({xIn, yIn, lpOut}: {xIn: bigint, yIn: bigint, lpOut?: bigint}) {
+        lpOut = lpOut ?? BigInt(Math.round(Math.sqrt(Number(xIn)*Number(yIn))))
+
+        const { context } = this.contract.circuits.addLiquidity(
+            this.circuitContext,
+            this.xReserves,
+            this.yReserves,
+            this.lpReserves,
+            xIn,
+            yIn, 
+            lpOut
+        )
+
+        this.syncCircuitContext(context)
+    }
+
+    removeLiquidity({lpIn, xOut, yOut}: {lpIn: bigint, xOut: bigint, yOut: bigint}) {
         const { context } = this.contract.circuits.removeLiquidity(
             this.circuitContext,
             this.xReserves,
             this.yReserves,
-            lpBurned,
+            this.lpReserves,
+            lpIn,
             xOut,
-            yOut,
-            recipient
+            yOut
         )
 
         this.syncCircuitContext(context)
     }
 
+    swapXToY({xIn, xFee, yOut}: {xIn: bigint, xFee?: bigint, yOut?: bigint}) {
+        xFee = xFee ?? this.calcSwapXToYFee(xIn)
+        yOut = yOut ?? this.calcSwapXToYOut(xIn, xFee)
+        
+        const { context } = this.contract.circuits.swapXToY(
+            this.circuitContext,
+            this.xReserves,
+            this.yReserves,
+            xIn,
+            xFee,
+            yOut
+        )
+
+        this.syncCircuitContext(context)
+    }
+
+    swapYToX({yIn, xFee, xOut}: {yIn: bigint, xFee?: bigint, xOut?: bigint}) {
+        xOut = xOut ?? this.calcSwapYToXOut(yIn)
+        xFee = xFee ?? this.calcSwapYToXFee(xOut)
+
+        const { context } = this.contract.circuits.swapYToX(
+            this.circuitContext,
+            this.xReserves,
+            this.yReserves,
+            yIn,
+            xFee,
+            xOut
+        )
+
+        this.syncCircuitContext(context)
+    }
+
+    rewardTreasury() {
+        const { context } = this.contract.circuits.rewardTreasury(
+            this.circuitContext,
+            this.xReserves
+        )
+
+        this.syncCircuitContext(context)
+    }
+
+    private calcSwapXToYFee(xIn: bigint): bigint {
+        const feeBps = this.getFeeBps()
+        let xFee = BigInt(Math.round(Number(xIn)*Number(feeBps)/10000))
+
+        while (xFee*10000n < feeBps*xIn) {
+            xFee += 1n
+        }
+
+        return xFee
+    }
+
+    private calcSwapXToYOut(xIn: bigint, xFee: bigint): bigint {
+        const initialK = this.xReserves.value*this.yReserves.value
+
+        let yOut = this.yReserves.value - BigInt(Math.round(Number(initialK)/Number(this.xReserves.value + xIn - xFee)));
+
+        while (initialK > (this.yReserves.value - yOut)*(this.xReserves.value + xIn - xFee)) {
+            yOut -= 1n
+        }
+
+        return yOut
+    }
+
+    private calcSwapYToXFee(xOut: bigint): bigint {
+        const feeBps = this.getFeeBps()
+        let xFee = BigInt(Math.round(Number(xOut)*Number(feeBps)/(10000 - Number(feeBps))))
+
+        while (xFee*(10000n - feeBps) < feeBps*xOut) {
+            xFee += 1n
+        }
+
+        return xFee
+    }
+
+    private calcSwapYToXOut(yIn: bigint): bigint {
+        const initialK = this.xReserves.value*this.yReserves.value
+
+        let xOutWithoutFee = this.xReserves.value - BigInt(Math.round(Number(initialK)/Number(this.yReserves.value + yIn)));
+
+        while (initialK > (this.xReserves.value - xOutWithoutFee)*(this.yReserves.value + yIn)) {
+            xOutWithoutFee -= 1n
+        }
+
+        const xFee = this.calcSwapXToYFee(xOutWithoutFee)
+
+        return xOutWithoutFee - xFee
+    }
+
     private syncCircuitContext(context: CircuitContext<unknown>) {
+        this.syncLPReserves(context)
         this.syncXReserves(context)
         this.syncYReserves(context)
 
@@ -146,16 +262,25 @@ export class Simulator {
         }
     }
 
+    private syncLPReserves(context: CircuitContext<unknown>) {
+         const newLPReserves = context.currentZswapLocalState.outputs.find(output => {
+            return !output.recipient.is_left && 
+                output.coinInfo.color.every((b, i) => b == this.lpReserves.color.at(i))
+        })
+
+        if (newLPReserves) {
+            this.lpReserves = {...this.lpReserves, ...newLPReserves.coinInfo}
+        }
+    }
+
     private syncXReserves(context: CircuitContext<unknown>) {
         const newXReserves = context.currentZswapLocalState.outputs.find(output => {
             return !output.recipient.is_left && output.coinInfo.color.every((b, i) => b == this.xReserves.color.at(i))
         })
 
-        if (!newXReserves) {
-            throw new Error("xReserves output not found")
+        if (newXReserves) {
+            this.xReserves = {...this.xReserves, ...newXReserves.coinInfo}
         }
-
-        this.xReserves = {...this.xReserves, ...newXReserves.coinInfo}
     }
 
     private syncYReserves(context: CircuitContext<unknown>) {1
@@ -163,11 +288,9 @@ export class Simulator {
             return !output.recipient.is_left && output.coinInfo.color.every((b, i) => b == this.yReserves.color.at(i))
         })
 
-        if (!newYReserves) {
-            throw new Error("yReserves output not found")
+        if (newYReserves) {
+            this.yReserves = {...this.yReserves, ...newYReserves.coinInfo}
         }
-
-        this.yReserves = {...this.yReserves, ...newYReserves.coinInfo}
     }
 }
 

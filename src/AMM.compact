@@ -1,0 +1,376 @@
+pragma language_version 0.18;
+
+import CompactStandardLibrary;
+
+// Swap fee in basis points (e.g. 10 = 0.1%)
+export ledger feeBps: Uint<16>;
+
+// Where the accumulated fees are sent
+export ledger treasury: Either<ZswapCoinPublicKey, ContractAddress>;
+
+// The fee is only charged on the X side
+export ledger xRewards: Uint<128>;
+
+// Though this number is available in QualifiedCoinInfo, we want this to be publicly readable once Midnight/Compact supports cross-contract calls
+export ledger xLiquidity: Uint<128>;
+
+export ledger xColor: Bytes<32>;
+
+export ledger yLiquidity: Uint<128>;
+
+export ledger yColor: Bytes<32>;
+
+// the lp supply in the lpCoin is 2**64-1 initially, from which lp tokens are circulated
+export ledger lpTotalSupply: Uint<64>;
+
+export ledger lpCirculatingSupply: Uint<64>;
+
+// The counter is used to generate unique nonces
+ledger counter: Counter;
+
+// Stored separately so that evolveNonce() can be used
+ledger nonce: Bytes<32>;
+
+// Only initializes the ledger contract state but doesn't yet initialize the liquidity 
+constructor(
+    f: Uint<16>,
+    t: Either<ZswapCoinPublicKey, ContractAddress>,
+    xc: Bytes<32>, 
+    yc: Bytes<32>,
+    nonce0: Bytes<32>
+) {
+    // Fee must be less than 100% (10000 basis points)
+    assert(f < 10000, "Fee too high");
+
+    feeBps = disclose(f);
+    treasury = disclose(t);
+    xRewards = 0;
+    xLiquidity = 0;
+    xColor = disclose(xc);
+    yLiquidity = 0;
+    yColor = disclose(yc);
+    lpTotalSupply = 18446744073709551615; // largest Uint<64> number
+    lpCirculatingSupply = 0;
+    nonce = disclose(nonce0);
+
+    const contractAddress = getContractAddress();
+
+    // pre-mint the LP tokens
+    mintToken(
+        getLPTokenName(),
+        lpTotalSupply,
+        nonce,
+        contractAddress
+    );
+}
+
+export circuit getLPTokenName(): Bytes<32> {
+    return pad(32, "Pulse LP Token");
+}
+
+export circuit getLPTokenColor(): Bytes<32> {
+    return tokenType(getLPTokenName(), kernel.self());
+}
+
+export circuit getFeeBps(): Uint<16> {
+    return feeBps;
+}
+
+export circuit getXColor(): Bytes<32> {
+    return xColor;
+}
+
+export circuit getYColor(): Bytes<32> {
+    return yColor;
+}
+
+export circuit getXLiquidity(): Uint<128> {
+    return xLiquidity;
+}
+
+export circuit getXRewards(): Uint<128> {
+    return xRewards;
+}
+
+export circuit getYLiquidity(): Uint<128> {
+    return yLiquidity;
+}
+
+export circuit getLPCirculatingSupply(): Uint<64> {
+    return lpCirculatingSupply;
+}
+
+export circuit initLiquidity(
+    lpReserves: QualifiedCoinInfo,
+    xIn: Uint<64>,
+    yIn: Uint<64>,
+    lpOut: Uint<64>
+): [] {
+    assert(lpCirculatingSupply == 0, "Already initialized");
+    assert(lpOut*lpOut <= xIn*yIn, "Too many LP tokens taken"); // protect the contract, not the recipient (the recipient should verify the tx)
+
+    incrNonce();
+
+    const contractAddress = getContractAddress();
+
+    lpCirculatingSupply = disclose(lpOut);
+    createZswapInput(lpReserves);
+    createZswapOutput( // TODO: make sure this output can't be claimed by another call
+        CoinInfo{
+            nonce,
+            getLPTokenColor(),
+            lpTotalSupply - lpCirculatingSupply
+        },
+        contractAddress
+    );
+
+    xLiquidity = disclose(xIn);
+    createZswapOutput( // TODO: make sure this output can't be claimed by another call
+        CoinInfo{
+            nonce,
+            xColor,
+            xLiquidity
+        },
+        contractAddress
+    );
+
+    yLiquidity = disclose(yIn);
+    createZswapOutput( // TODO: make sure this output can't be claimed by another call
+        CoinInfo{
+            nonce,
+            yColor,
+            yLiquidity
+        },
+        contractAddress
+    );
+}
+
+export circuit addLiquidity(
+    xReserves: QualifiedCoinInfo,
+    yReserves: QualifiedCoinInfo,
+    lpReserves: QualifiedCoinInfo,
+    xIn: Uint<64>,
+    yIn: Uint<64>,
+    lpOut: Uint<64>
+): [] {
+    assert(lpCirculatingSupply > 0, "Not yet initialized");
+
+    if (disclose(xIn) * yLiquidity < disclose(yIn) * xLiquidity) {
+        assert(lpOut * xLiquidity <= xIn * lpCirculatingSupply, "Too many LP tokens taken (bound by xIn)");
+    } else {
+        assert(lpOut * yLiquidity <= yIn * lpCirculatingSupply, "Too many LP tokens taken (bound by yIn)");
+    }
+
+    incrNonce();
+
+    const contractAddress = getContractAddress();
+
+    lpCirculatingSupply = lpCirculatingSupply + disclose(lpOut) as Uint<64>;
+    createZswapInput(lpReserves);
+    createZswapOutput( // TODO: make sure this output can't be claimed by another call
+        CoinInfo{
+            nonce,
+            getLPTokenColor(),
+            lpTotalSupply - lpCirculatingSupply
+        },
+        contractAddress
+    );
+
+    xLiquidity = xLiquidity + disclose(xIn) as Uint<128>;
+    createZswapInput(xReserves);
+    createZswapOutput( // TODO: make sure this output can't be claimed by another call
+        CoinInfo{
+            nonce,
+            xColor,
+            xLiquidity + xRewards as Uint<128>
+        },
+        contractAddress
+    );
+
+    yLiquidity = yLiquidity + disclose(yIn) as Uint<128>;
+    createZswapInput(yReserves);
+    createZswapOutput( // TODO: make sure this output can't be claimed by another call
+        CoinInfo{
+            nonce,
+            yColor,
+            yLiquidity
+        },
+        contractAddress
+    );
+}
+
+export circuit removeLiquidity(
+    xReserves: QualifiedCoinInfo,
+    yReserves: QualifiedCoinInfo,
+    lpReserves: QualifiedCoinInfo,
+    lpIn: Uint<64>,
+    xOut: Uint<64>,
+    yOut: Uint<64>
+): [] {
+    assert(xOut * lpCirculatingSupply <= lpIn * xLiquidity, "Too many X tokens taken");
+    assert(yOut * lpCirculatingSupply <= lpIn * yLiquidity, "Too many Y tokens taken");
+
+    incrNonce();
+
+    const contractAddress = getContractAddress();
+
+    lpCirculatingSupply = lpCirculatingSupply - disclose(lpIn);
+    createZswapInput(lpReserves);
+    createZswapOutput( // TODO: make sure this output can't be claimed by another call
+        CoinInfo{
+            nonce,
+            getLPTokenColor(),
+            lpTotalSupply - lpCirculatingSupply
+        },
+        contractAddress
+    );
+
+    xLiquidity = xLiquidity - disclose(xOut);
+    createZswapInput(xReserves);
+    createZswapOutput( // TODO: make sure this output can't be claimed by another call
+        CoinInfo{
+            nonce,
+            xColor,
+            xLiquidity + xRewards as Uint<128>
+        },
+        contractAddress
+    );
+
+    yLiquidity = yLiquidity - disclose(yOut);
+    createZswapInput(yReserves);
+    createZswapOutput( // TODO: make sure this output can't be claimed by another call
+        CoinInfo{
+            nonce,
+            yColor,
+            yLiquidity
+        },
+        contractAddress
+    );
+}
+
+export circuit swapXToY(
+    xReserves: QualifiedCoinInfo,
+    yReserves: QualifiedCoinInfo,
+    xIn: Uint<64>,
+    xFee: Uint<64>,
+    yOut: Uint<64>
+): [] {
+    assert(xFee * 10000 >= xIn * feeBps, "Fee too low");
+
+    incrNonce();
+
+    const initialK = calcK();
+    const contractAddress = getContractAddress();
+
+    xRewards = xRewards + disclose(xFee) as Uint<128>;
+    xLiquidity = xLiquidity + disclose(xIn - xFee) as Uint<128>;
+    createZswapInput(xReserves);
+    createZswapOutput( // TODO: make sure this output can't be claimed by another call
+        CoinInfo{
+            nonce,
+            xColor,
+            xLiquidity + xRewards as Uint<128>
+        },
+        contractAddress
+    );
+
+    yLiquidity = yLiquidity - disclose(yOut);
+    createZswapInput(yReserves);
+    createZswapOutput( // TODO: make sure this output can't be claimed by another call
+        CoinInfo{
+            nonce,
+            yColor,
+            yLiquidity
+        },
+        contractAddress
+    );
+
+    const finalK = calcK();
+
+    assert(finalK >= initialK, "Final k smaller than initial k");
+}
+
+export circuit swapYToX(
+    xReserves: QualifiedCoinInfo,
+    yReserves: QualifiedCoinInfo,
+    yIn: Uint<64>,
+    xFee: Uint<64>,
+    xOut: Uint<64>
+): [] {
+    assert(xFee * (10000 - feeBps) >= xOut * feeBps, "Fee too low");
+
+    incrNonce();
+
+    const initialK = calcK();
+    const contractAddress = getContractAddress();
+
+    xRewards = xRewards + disclose(xFee) as Uint<128>;
+    xLiquidity = xLiquidity - disclose(xOut + xFee);
+    createZswapInput(xReserves);
+    createZswapOutput( // TODO: make sure this output can't be claimed by another call
+        CoinInfo{
+            nonce,
+            xColor,
+            xLiquidity + xRewards as Uint<128>
+        },
+        contractAddress
+    );
+
+    yLiquidity = yLiquidity + disclose(yIn) as Uint<128>;
+    createZswapInput(yReserves);
+    createZswapOutput( // TODO: make sure this output can't be claimed by another call
+        CoinInfo{
+            nonce,
+            yColor,
+            yLiquidity
+        },
+        contractAddress
+    );
+
+    const finalK = calcK();
+
+    assert(finalK >= initialK, "Final k smaller than initial k");
+}
+
+export circuit rewardTreasury(xReserves: QualifiedCoinInfo): [] {
+    incrNonce();
+
+    const contractAddress = getContractAddress();
+
+    createZswapInput(xReserves);
+    createZswapOutput( // TODO: make sure this output can't be claimed by another call
+        CoinInfo{
+            nonce,
+            xColor,
+            xLiquidity
+        },
+        contractAddress
+    );
+    createZswapOutput( // TODO: make sure this output can't be claimed by another call
+        CoinInfo{
+            nonce,
+            xColor,
+            xRewards
+        },
+        treasury
+    );
+
+    xRewards = 0;
+}
+
+circuit getContractAddress(): Either<ZswapCoinPublicKey, ContractAddress> {
+    return Either<ZswapCoinPublicKey, ContractAddress>{
+        false,
+        ZswapCoinPublicKey{bytes: pad(32, "")},
+        kernel.self()
+    };
+}
+
+circuit incrNonce(): [] {
+    counter.increment(1);
+    nonce = evolveNonce(counter, nonce);
+}
+
+circuit calcK(): Uint<252> {
+    return ((xLiquidity as Uint<126>) * (yLiquidity as Uint<126>)) as Uint<252>;
+}

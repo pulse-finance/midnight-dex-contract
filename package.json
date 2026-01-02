@@ -1,15 +1,15 @@
 {
   "name": "midnight-dex-contract",
-  "version": "1.0.0",
-  "description": "",
+  "version": "0.1.0",
+  "description": "Compact contracts for Pulse's Midnight DEX",
   "main": "index.js",
   "scripts": {
-    "build": "compact compile ./AMM.compact ./dist",
+    "build": "compact compile ./src/AMM.compact ./dist",
     "test": "bun test"
   },
   "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "author": "Christian Schmitz",
+  "license": "MIT",
   "packageManager": "pnpm@10.20.0",
   "devDependencies": {
     "@midnight-ntwrk/compact-runtime": "^0.9.0",
