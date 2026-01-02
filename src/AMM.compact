@@ -107,7 +107,7 @@ export circuit initLiquidity(
     lpOut: Uint<64>
 ): [] {
     assert(lpCirculatingSupply == 0, "Already initialized");
-    assert(lpOut*lpOut <= xIn*yIn, "Too many LP tokens taken"); // protect the contract, not the recipient (the recipient should verify the tx)
+    assert(lpOut*lpOut <= xIn*yIn, "Too many LP tokens taken");
 
     incrNonce();
 
@@ -115,7 +115,7 @@ export circuit initLiquidity(
 
     lpCirculatingSupply = disclose(lpOut);
     createZswapInput(lpReserves);
-    createZswapOutput( // TODO: make sure this output can't be claimed by another call
+    createZswapOutput(
         CoinInfo{
             nonce,
             getLPTokenColor(),
@@ -125,7 +125,7 @@ export circuit initLiquidity(
     );
 
     xLiquidity = disclose(xIn);
-    createZswapOutput( // TODO: make sure this output can't be claimed by another call
+    createZswapOutput(
         CoinInfo{
             nonce,
             xColor,
@@ -135,7 +135,7 @@ export circuit initLiquidity(
     );
 
     yLiquidity = disclose(yIn);
-    createZswapOutput( // TODO: make sure this output can't be claimed by another call
+    createZswapOutput(
         CoinInfo{
             nonce,
             yColor,
@@ -167,7 +167,7 @@ export circuit addLiquidity(
 
     lpCirculatingSupply = lpCirculatingSupply + disclose(lpOut) as Uint<64>;
     createZswapInput(lpReserves);
-    createZswapOutput( // TODO: make sure this output can't be claimed by another call
+    createZswapOutput(
         CoinInfo{
             nonce,
             getLPTokenColor(),
@@ -178,7 +178,7 @@ export circuit addLiquidity(
 
     xLiquidity = xLiquidity + disclose(xIn) as Uint<128>;
     createZswapInput(xReserves);
-    createZswapOutput( // TODO: make sure this output can't be claimed by another call
+    createZswapOutput(
         CoinInfo{
             nonce,
             xColor,
@@ -189,7 +189,7 @@ export circuit addLiquidity(
 
     yLiquidity = yLiquidity + disclose(yIn) as Uint<128>;
     createZswapInput(yReserves);
-    createZswapOutput( // TODO: make sure this output can't be claimed by another call
+    createZswapOutput(
         CoinInfo{
             nonce,
             yColor,
@@ -216,7 +216,7 @@ export circuit removeLiquidity(
 
     lpCirculatingSupply = lpCirculatingSupply - disclose(lpIn);
     createZswapInput(lpReserves);
-    createZswapOutput( // TODO: make sure this output can't be claimed by another call
+    createZswapOutput(
         CoinInfo{
             nonce,
             getLPTokenColor(),
@@ -227,7 +227,7 @@ export circuit removeLiquidity(
 
     xLiquidity = xLiquidity - disclose(xOut);
     createZswapInput(xReserves);
-    createZswapOutput( // TODO: make sure this output can't be claimed by another call
+    createZswapOutput(
         CoinInfo{
             nonce,
             xColor,
@@ -238,7 +238,7 @@ export circuit removeLiquidity(
 
     yLiquidity = yLiquidity - disclose(yOut);
     createZswapInput(yReserves);
-    createZswapOutput( // TODO: make sure this output can't be claimed by another call
+    createZswapOutput(
         CoinInfo{
             nonce,
             yColor,
@@ -265,7 +265,7 @@ export circuit swapXToY(
     xRewards = xRewards + disclose(xFee) as Uint<128>;
     xLiquidity = xLiquidity + disclose(xIn - xFee) as Uint<128>;
     createZswapInput(xReserves);
-    createZswapOutput( // TODO: make sure this output can't be claimed by another call
+    createZswapOutput(
         CoinInfo{
             nonce,
             xColor,
@@ -276,7 +276,7 @@ export circuit swapXToY(
 
     yLiquidity = yLiquidity - disclose(yOut);
     createZswapInput(yReserves);
-    createZswapOutput( // TODO: make sure this output can't be claimed by another call
+    createZswapOutput(
         CoinInfo{
             nonce,
             yColor,
@@ -307,7 +307,7 @@ export circuit swapYToX(
     xRewards = xRewards + disclose(xFee) as Uint<128>;
     xLiquidity = xLiquidity - disclose(xOut + xFee);
     createZswapInput(xReserves);
-    createZswapOutput( // TODO: make sure this output can't be claimed by another call
+    createZswapOutput(
         CoinInfo{
             nonce,
             xColor,
@@ -318,7 +318,7 @@ export circuit swapYToX(
 
     yLiquidity = yLiquidity + disclose(yIn) as Uint<128>;
     createZswapInput(yReserves);
-    createZswapOutput( // TODO: make sure this output can't be claimed by another call
+    createZswapOutput(
         CoinInfo{
             nonce,
             yColor,
@@ -338,7 +338,7 @@ export circuit rewardTreasury(xReserves: QualifiedCoinInfo): [] {
     const contractAddress = getContractAddress();
 
     createZswapInput(xReserves);
-    createZswapOutput( // TODO: make sure this output can't be claimed by another call
+    createZswapOutput(
         CoinInfo{
             nonce,
             xColor,
@@ -346,7 +346,7 @@ export circuit rewardTreasury(xReserves: QualifiedCoinInfo): [] {
         },
         contractAddress
     );
-    createZswapOutput( // TODO: make sure this output can't be claimed by another call
+    createZswapOutput(
         CoinInfo{
             nonce,
             xColor,
