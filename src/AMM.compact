@@ -111,37 +111,32 @@ export circuit initLiquidity(
 
     incrNonce();
 
-    const contractAddress = getContractAddress();
-
     lpCirculatingSupply = disclose(lpOut);
     createZswapInput(lpReserves);
-    createZswapOutput(
+    receive(
         CoinInfo{
             nonce,
             getLPTokenColor(),
             lpTotalSupply - lpCirculatingSupply
-        },
-        contractAddress
+        }
     );
 
     xLiquidity = disclose(xIn);
-    createZswapOutput(
+    receive(
         CoinInfo{
             nonce,
             xColor,
             xLiquidity
-        },
-        contractAddress
+        }
     );
 
     yLiquidity = disclose(yIn);
-    createZswapOutput(
+    receive(
         CoinInfo{
             nonce,
             yColor,
             yLiquidity
-        },
-        contractAddress
+        }
     );
 }
 
@@ -155,47 +150,165 @@ export circuit addLiquidity(
 ): [] {
     assert(lpCirculatingSupply > 0, "Not yet initialized");
 
-    if (disclose(xIn) * yLiquidity < disclose(yIn) * xLiquidity) {
-        assert(lpOut * xLiquidity <= xIn * lpCirculatingSupply, "Too many LP tokens taken (bound by xIn)");
+    const xLiquidityAdded = disclose(xIn);
+    const yLiquidityAdded = disclose(yIn);
+
+    if (xLiquidityAdded * yLiquidity < yLiquidityAdded * xLiquidity) {
+        assert(lpOut * xLiquidity <= xLiquidityAdded * lpCirculatingSupply, "Too many LP tokens taken (bound by xIn)");
     } else {
-        assert(lpOut * yLiquidity <= yIn * lpCirculatingSupply, "Too many LP tokens taken (bound by yIn)");
+        assert(lpOut * yLiquidity <= yLiquidityAdded * lpCirculatingSupply, "Too many LP tokens taken (bound by yIn)");
     }
 
     incrNonce();
 
-    const contractAddress = getContractAddress();
-
     lpCirculatingSupply = lpCirculatingSupply + disclose(lpOut) as Uint<64>;
     createZswapInput(lpReserves);
-    createZswapOutput(
+    receive(
         CoinInfo{
             nonce,
             getLPTokenColor(),
             lpTotalSupply - lpCirculatingSupply
-        },
-        contractAddress
+        }
     );
 
-    xLiquidity = xLiquidity + disclose(xIn) as Uint<128>;
+    xLiquidity = xLiquidity + xLiquidityAdded as Uint<128>;
     createZswapInput(xReserves);
-    createZswapOutput(
+    receive(
         CoinInfo{
             nonce,
             xColor,
             xLiquidity + xRewards as Uint<128>
-        },
-        contractAddress
+        }
     );
 
-    yLiquidity = yLiquidity + disclose(yIn) as Uint<128>;
+    yLiquidity = yLiquidity + yLiquidityAdded as Uint<128>;
     createZswapInput(yReserves);
-    createZswapOutput(
+    receive(
         CoinInfo{
             nonce,
             yColor,
             yLiquidity
-        },
-        contractAddress
+        }
+    );
+}
+
+// Send X liquidity, at the same time swapping the correct amount into Y liquidity via the AMM itself (paying the correct fees too)
+// The correct 
+export circuit zapInXLiquidity(
+    xReserves: QualifiedCoinInfo,
+    lpReserves: QualifiedCoinInfo,
+    xIn: Uint<64>,
+    xSwap: Uint<64>,
+    xFee: Uint<64>,
+    ySwap: Uint<64>,
+    lpOut: Uint<64>
+): [] {
+    assert(lpCirculatingSupply > 0, "Not yet initialized");
+    assert(xFee * 10000 >= xSwap * feeBps, "Fee too low");
+
+    const xLiquidityAfterSwap = xLiquidity + disclose(xSwap) - disclose(xFee) as Uint<128>;
+    const yLiquidityAfterSwap = yLiquidity - disclose(ySwap);
+
+    assert(calcK(xLiquidity, yLiquidity) <= calcK(xLiquidityAfterSwap, yLiquidityAfterSwap), "Post-swap k is lower than initial k");
+
+    // this is the liquidity that is added after the swap
+    const xLiquidityAddedAfterSwap = disclose(xIn) - disclose(xSwap); // everything that's not swapped
+    const yLiquidityAddedAfterSwap = disclose(ySwap);
+
+    if (xLiquidityAddedAfterSwap * yLiquidityAfterSwap < yLiquidityAddedAfterSwap * xLiquidityAfterSwap) {
+        assert(lpOut * xLiquidityAfterSwap <= xLiquidityAddedAfterSwap * lpCirculatingSupply, "Too many LP tokens taken (bound by x)");
+    } else {
+        assert(lpOut * yLiquidityAfterSwap <= yLiquidityAddedAfterSwap * lpCirculatingSupply, "Too many LP tokens taken (bound by y)");
+    }
+
+    incrNonce();
+
+    lpCirculatingSupply = lpCirculatingSupply - disclose(lpOut);
+    createZswapInput(lpReserves);
+    receive(
+        CoinInfo{
+            nonce,
+            getLPTokenColor(),
+            lpTotalSupply - lpCirculatingSupply
+        }
+    );
+
+    // the net xLiquidity change is just (xSwap-xFee)+(xIn - xSwap) => xIn - xFee
+    xLiquidity = xLiquidity + disclose(xIn) - disclose(xFee) as Uint<128>;
+    xRewards = xRewards + disclose(xFee) as Uint<128>;
+    createZswapInput(xReserves);
+    receive(
+        CoinInfo{
+            nonce,
+            xColor,
+            xLiquidity + xRewards as Uint<128>
+        }
+    );
+
+    // no net change of yLiquidity
+}
+
+export circuit zapInYLiquidity(
+    xReserves: QualifiedCoinInfo,
+    yReserves: QualifiedCoinInfo,
+    lpReserves: QualifiedCoinInfo,
+    yIn: Uint<64>,
+    ySwap: Uint<64>,
+    xFee: Uint<64>,
+    xSwap: Uint<64>,
+    lpOut: Uint<64>
+): [] {
+    assert(lpCirculatingSupply > 0, "Not yet initialized");
+    assert(xFee * (10000 - feeBps) >= xSwap * feeBps, "Fee too low");
+
+    const xLiquidityAfterSwap = xLiquidity - disclose(xSwap) - disclose(xFee);
+    const yLiquidityAfterSwap = yLiquidity + disclose(ySwap) as Uint<128>;
+
+    assert(calcK(xLiquidity, yLiquidity) <= calcK(xLiquidityAfterSwap, yLiquidityAfterSwap), "Post-swap k is lower than initial k");
+
+    // this is the liquidity that is added after the swap
+    const xLiquidityAddedAfterSwap = disclose(xSwap); // everything that's not swapped
+    const yLiquidityAddedAfterSwap = disclose(yIn - ySwap);
+
+    if (xLiquidityAddedAfterSwap * yLiquidityAfterSwap < yLiquidityAddedAfterSwap * xLiquidityAfterSwap) {
+        assert(lpOut * xLiquidityAfterSwap <= xLiquidityAddedAfterSwap * lpCirculatingSupply, "Too many LP tokens taken (bound by x)");
+    } else {
+        assert(lpOut * yLiquidityAfterSwap <= yLiquidityAddedAfterSwap * lpCirculatingSupply, "Too many LP tokens taken (bound by y)");
+    }
+
+    incrNonce();
+
+    lpCirculatingSupply = lpCirculatingSupply - disclose(lpOut);
+    createZswapInput(lpReserves);
+    receive(
+        CoinInfo{
+            nonce,
+            getLPTokenColor(),
+            lpTotalSupply - lpCirculatingSupply
+        }
+    );
+
+    // the xLiquidity net change is (-xSwap -xFee)+xSwap => -xFee
+    xLiquidity = xLiquidity - disclose(xFee);
+    xRewards = xRewards + disclose(xFee) as Uint<128>;
+    createZswapInput(xReserves);
+    receive(
+        CoinInfo{
+            nonce,
+            xColor,
+            xLiquidity + xRewards as Uint<128>
+        }
+    );
+
+    // the net yLiquidity change is just (ySwap)+(yIn - ySwap) => yIn
+    yLiquidity = yLiquidity + disclose(yIn) as Uint<128>;
+    createZswapInput(yReserves);
+    receive(
+        CoinInfo{
+            nonce,
+            yColor,
+            yLiquidity
+        }
     );
 }
 
@@ -212,39 +325,153 @@ export circuit removeLiquidity(
 
     incrNonce();
 
-    const contractAddress = getContractAddress();
-
     lpCirculatingSupply = lpCirculatingSupply - disclose(lpIn);
     createZswapInput(lpReserves);
-    createZswapOutput(
+    receive(
         CoinInfo{
             nonce,
             getLPTokenColor(),
             lpTotalSupply - lpCirculatingSupply
-        },
-        contractAddress
+        }
     );
 
     xLiquidity = xLiquidity - disclose(xOut);
     createZswapInput(xReserves);
-    createZswapOutput(
+    receive(
         CoinInfo{
             nonce,
             xColor,
             xLiquidity + xRewards as Uint<128>
-        },
-        contractAddress
+        }
     );
 
     yLiquidity = yLiquidity - disclose(yOut);
     createZswapInput(yReserves);
-    createZswapOutput(
+    receive(
         CoinInfo{
             nonce,
             yColor,
             yLiquidity
-        },
-        contractAddress
+        }
+    );
+}
+
+// the user burns lp tokens, and only wants to receive X tokens
+export circuit zapOutXLiquidity(
+    xReserves: QualifiedCoinInfo,
+    lpReserves: QualifiedCoinInfo,
+    lpIn: Uint<64>,
+    xOut: Uint<64>,
+    ySwap: Uint<64>,
+    xFee: Uint<64>,
+    xSwap: Uint<64>
+): [] {
+    assert(lpCirculatingSupply > 0, "Not yet initialized");
+
+    const xLiquidityRemovedBeforeSwap = disclose(xOut) - disclose(xSwap);
+    const yLiquidityRemovedBeforeSwap = disclose(ySwap);
+
+    assert(xLiquidityRemovedBeforeSwap * lpCirculatingSupply <= lpIn * xLiquidity, "Too many X tokens taken");
+    assert(yLiquidityRemovedBeforeSwap * lpCirculatingSupply <= lpIn * yLiquidity, "Too many Y tokens taken");
+
+    // now validate the swap
+    assert(xFee * (10000 - feeBps) >= xSwap * feeBps, "Fee too low");
+    
+    const xLiquidityBeforeSwap = xLiquidity - xLiquidityRemovedBeforeSwap;
+    const yLiquidityBeforeSwap = yLiquidity - yLiquidityRemovedBeforeSwap;
+    const xLiquidityAfterSwap = xLiquidityBeforeSwap - disclose(xSwap) - disclose(xFee);
+    const yLiquidityAfterSwap = yLiquidityBeforeSwap + disclose(ySwap) as Uint<128>;
+
+    assert(calcK(xLiquidityBeforeSwap, yLiquidityBeforeSwap) <= calcK(xLiquidityAfterSwap, yLiquidityAfterSwap), "Post-swap k is lower than pre-swap k");
+
+    incrNonce();
+
+    lpCirculatingSupply = lpCirculatingSupply - disclose(lpIn);
+    createZswapInput(lpReserves);
+    receive(
+        CoinInfo{
+            nonce,
+            getLPTokenColor(),
+            lpTotalSupply - lpCirculatingSupply
+        }
+    );
+
+    xRewards = xRewards + disclose(xFee) as Uint<128>;
+    xLiquidity = xLiquidity - disclose(xOut) - disclose(xFee) as Uint<128>;
+    createZswapInput(xReserves);
+    receive(
+        CoinInfo{
+            nonce,
+            xColor,
+            xLiquidity + xRewards as Uint<128>
+        }
+    );
+
+    // no net change of yLiquidity   
+}
+
+// the user burns lp tokens, and only wants to receive Y tokens
+export circuit zapOutYLiquidity(
+    xReserves: QualifiedCoinInfo,
+    yReserves: QualifiedCoinInfo,
+    lpReserves: QualifiedCoinInfo,
+    lpIn: Uint<64>,
+    yOut: Uint<64>,
+    xSwap: Uint<64>,
+    xFee: Uint<64>,
+    ySwap: Uint<64>
+): [] {
+    assert(lpCirculatingSupply > 0, "Not yet initialized");
+
+    const xLiquidityRemovedBeforeSwap = disclose(xSwap);
+    const yLiquidityRemovedBeforeSwap = disclose(yOut - ySwap);
+
+    assert(xLiquidityRemovedBeforeSwap * lpCirculatingSupply <= lpIn * xLiquidity, "Too many X tokens taken");
+    assert(yLiquidityRemovedBeforeSwap * lpCirculatingSupply <= lpIn * yLiquidity, "Too many Y tokens taken");
+
+    // now validate the swap
+    assert(xFee * 10000 >= xSwap * feeBps, "Fee too low");
+
+    const xLiquidityBeforeSwap = xLiquidity - xLiquidityRemovedBeforeSwap;
+    const yLiquidityBeforeSwap = yLiquidity - yLiquidityRemovedBeforeSwap;
+    const xLiquidityAfterSwap = xLiquidityBeforeSwap + disclose(xSwap) - disclose(xFee) as Uint<128>;
+    const yLiquidityAfterSwap = yLiquidityBeforeSwap - disclose(ySwap);
+
+    assert(calcK(xLiquidityBeforeSwap, yLiquidityBeforeSwap) <= calcK(xLiquidityAfterSwap, yLiquidityAfterSwap), "Post-swap k is lower than pre-swap k");
+
+    incrNonce();
+
+    lpCirculatingSupply = lpCirculatingSupply - disclose(lpIn);
+    createZswapInput(lpReserves);
+    receive(
+        CoinInfo{
+            nonce,
+            getLPTokenColor(),
+            lpTotalSupply - lpCirculatingSupply
+        }
+    );
+
+    // the xLiquidity net change is (-xSwap -xFee)+xSwap => -xFee
+    xLiquidity = xLiquidity - disclose(xFee);
+    xRewards = xRewards + disclose(xFee) as Uint<128>;
+    createZswapInput(xReserves);
+    receive(
+        CoinInfo{
+            nonce,
+            xColor,
+            xLiquidity + xRewards as Uint<128>
+        }
+    );
+
+    // the net yLiquidity change is just (-yOut + ySwap)-(ySwap) => -yOut
+    yLiquidity = yLiquidity - disclose(yOut) as Uint<128>;
+    createZswapInput(yReserves);
+    receive(
+        CoinInfo{
+            nonce,
+            yColor,
+            yLiquidity
+        }
     );
 }
 
@@ -259,33 +486,30 @@ export circuit swapXToY(
 
     incrNonce();
 
-    const initialK = calcK();
-    const contractAddress = getContractAddress();
+    const initialK = calcK(xLiquidity, yLiquidity);
 
     xRewards = xRewards + disclose(xFee) as Uint<128>;
     xLiquidity = xLiquidity + disclose(xIn - xFee) as Uint<128>;
     createZswapInput(xReserves);
-    createZswapOutput(
+    receive(
         CoinInfo{
             nonce,
             xColor,
             xLiquidity + xRewards as Uint<128>
-        },
-        contractAddress
+        }
     );
 
     yLiquidity = yLiquidity - disclose(yOut);
     createZswapInput(yReserves);
-    createZswapOutput(
+    receive(
         CoinInfo{
             nonce,
             yColor,
             yLiquidity
-        },
-        contractAddress
+        }
     );
 
-    const finalK = calcK();
+    const finalK = calcK(xLiquidity, yLiquidity);
 
     assert(finalK >= initialK, "Final k smaller than initial k");
 }
@@ -301,33 +525,30 @@ export circuit swapYToX(
 
     incrNonce();
 
-    const initialK = calcK();
-    const contractAddress = getContractAddress();
+    const initialK = calcK(xLiquidity, yLiquidity);
 
     xRewards = xRewards + disclose(xFee) as Uint<128>;
     xLiquidity = xLiquidity - disclose(xOut + xFee);
     createZswapInput(xReserves);
-    createZswapOutput(
+    receive(
         CoinInfo{
             nonce,
             xColor,
             xLiquidity + xRewards as Uint<128>
-        },
-        contractAddress
+        }
     );
 
     yLiquidity = yLiquidity + disclose(yIn) as Uint<128>;
     createZswapInput(yReserves);
-    createZswapOutput(
+    receive(
         CoinInfo{
             nonce,
             yColor,
             yLiquidity
-        },
-        contractAddress
+        }
     );
 
-    const finalK = calcK();
+    const finalK = calcK(xLiquidity, yLiquidity);
 
     assert(finalK >= initialK, "Final k smaller than initial k");
 }
@@ -371,6 +592,6 @@ circuit incrNonce(): [] {
     nonce = evolveNonce(counter, nonce);
 }
 
-circuit calcK(): Uint<252> {
-    return ((xLiquidity as Uint<126>) * (yLiquidity as Uint<126>)) as Uint<252>;
+circuit calcK(x: Uint<128>, y: Uint<128>): Uint<252> {
+    return ((x as Uint<126>) * (y as Uint<126>)) as Uint<252>;
 }
