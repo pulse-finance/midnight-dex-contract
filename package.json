@@ -1,5 +1,5 @@
 {
-  "name": "midnight-dex-contract",
+  "name": "@pulse-finance/dex-contract",
   "version": "0.1.0",
   "description": "Compact contracts for Pulse's Midnight DEX",
   "main": "index.js",
