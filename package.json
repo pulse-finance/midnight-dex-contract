@@ -3,8 +3,8 @@
   "version": "0.1.3",
   "description": "Compact contracts for Pulse's Midnight DEX",
   "exports": {
-    "./amm": "./dist/amm/contract/index.cjs",
-    "./faucet": "./dist/faucet/contract/index.cjs"
+    "./amm": "./dist/amm/contract/index.js",
+    "./faucet": "./dist/faucet/contract/index.js"
   },
   "scripts": {
     "build": "pnpm run build:amm && pnpm run build:faucet",
