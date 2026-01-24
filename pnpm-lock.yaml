@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@midnight-ntwrk/compact-runtime':
-        specifier: ^0.9.0
-        version: 0.9.0
+        specifier: 0.11.0-rc.1
+        version: 0.11.0-rc.1
     devDependencies:
       '@types/bun':
         specifier: ^1.3.5
@@ -18,11 +18,11 @@ importers:
 
 packages:
 
-  '@midnight-ntwrk/compact-runtime@0.9.0':
-    resolution: {integrity: sha512-Dsms+SWRWlaTIay4SO7ITxTJvo8lgEKkMss+dQnIZDnEoCEO5lHTSj4TckBAvyYSWm4KElN3tir/MVm5hHgfDA==}
+  '@midnight-ntwrk/compact-runtime@0.11.0-rc.1':
+    resolution: {integrity: sha512-uoGjsk/pj/ZOZu0Dgpo5Lrm1P4TT+hgpZkATzNPJHYmWoiM9WI98Bi1VXrJNoqJaOYgMCcvWRrIFCx1GXU5rAA==}
 
-  '@midnight-ntwrk/onchain-runtime@0.3.0':
-    resolution: {integrity: sha512-vZWPoz7MhXO5UgWZET50g7APOcT5dbAfADDcrSreeOagV8lj7JJzlnYIIhrcUaMOv+NHWxPaUcJUYUkmu9LoTA==}
+  '@midnight-ntwrk/onchain-runtime-v1@1.0.0-rc.3':
+    resolution: {integrity: sha512-4L+m9CVrSWwow89rfy90mjmEwDXaP+/hKj6DJz2QdtfO6PRLUDyM+umaprVlAoOXwET3arAJPpkpg8qwqxbJiQ==}
 
   '@types/bun@1.3.5':
     resolution: {integrity: sha512-RnygCqNrd3srIPEWBd5LFeUYG7plCoH2Yw9WaZGyNmdTEei+gWaHqydbaIRkIkcbXwhBT94q78QljxN0Sk838w==}
@@ -45,13 +45,13 @@ packages:
 
 snapshots:
 
-  '@midnight-ntwrk/compact-runtime@0.9.0':
+  '@midnight-ntwrk/compact-runtime@0.11.0-rc.1':
     dependencies:
-      '@midnight-ntwrk/onchain-runtime': 0.3.0
+      '@midnight-ntwrk/onchain-runtime-v1': 1.0.0-rc.3
       '@types/object-inspect': 1.13.0
       object-inspect: 1.13.4
 
-  '@midnight-ntwrk/onchain-runtime@0.3.0': {}
+  '@midnight-ntwrk/onchain-runtime-v1@1.0.0-rc.3': {}
 
   '@types/bun@1.3.5':
     dependencies:
