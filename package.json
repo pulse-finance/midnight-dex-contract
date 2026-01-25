@@ -1,6 +1,6 @@
 {
   "name": "@pulsefinance/dex-contract",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Compact contracts for Pulse's Midnight DEX",
   "exports": {
     "./amm": "./dist/amm/contract/index.js",
