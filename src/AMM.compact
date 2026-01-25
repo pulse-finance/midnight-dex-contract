@@ -64,10 +64,10 @@ export circuit mintLPTokens(): [] {
 
     lpTotalSupply = lpTotalSupply + 18446744073709551615 as Uint<128>;
 
-    receiveUnshielded(
-        getLPTokenColor(),
-        lpTotalSupply - lpCirculatingSupply
-    );
+    //receiveUnshielded(
+    //    getLPTokenColor(),
+    //    lpTotalSupply - lpCirculatingSupply
+    //);
 }
 
 // receive xIn
