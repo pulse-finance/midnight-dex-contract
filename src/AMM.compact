@@ -70,6 +70,22 @@ export circuit mintLPTokens(): [] {
     //);
 }
 
+export circuit mintShieldedLPTokens(nonce: Bytes<32>): [] {
+    mintShieldedToken(
+        getLPTokenName(),
+        18446744073709551615,
+        disclose(nonce),
+        getShieldedContractAddress()
+    );
+
+    lpTotalSupply = lpTotalSupply + 18446744073709551615 as Uint<128>;
+
+    //receiveUnshielded(
+    //    getLPTokenColor(),
+    //    lpTotalSupply - lpCirculatingSupply
+    //);
+}
+
 // receive xIn
 // receive yIn
 // mint and send lpOut to recipient
@@ -574,6 +590,14 @@ circuit getUnshieldedContractAddress(): Either<ContractAddress, UserAddress> {
         true,
         kernel.self(),
         UserAddress{bytes: pad(32, "")}
+    };
+}
+
+circuit getShieldedContractAddress(): Either<ZswapCoinPublicKey, ContractAddress> {
+    return Either<ZswapCoinPublicKey, ContractAddress> {
+        false,
+        ZswapCoinPublicKey{bytes: pad(32, "")},
+        kernel.self()
     };
 }
 
