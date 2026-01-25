@@ -55,14 +55,14 @@ export circuit getYLiquidity(): Uint<128> {
     return yLiquidity;
 }
 
-export circuit mintLPTokens(): [] {
+export circuit mintLPTokens(contractAddress: Either<ContractAddress, UserAddress>): [] {
     mintUnshieldedToken(
         getLPTokenName(),
         18446744073709551615,
-        getUnshieldedContractAddress()
+        disclose(contractAddress)
     );
 
-    lpTotalSupply = lpTotalSupply + 18446744073709551615 as Uint<128>;
+    //lpTotalSupply = lpTotalSupply + 18446744073709551615 as Uint<128>;
 
     //receiveUnshielded(
     //    getLPTokenColor(),
