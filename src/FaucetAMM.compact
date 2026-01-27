@@ -1,12 +1,12 @@
 pragma language_version 0.19;
 
+// the FaucetAMM contract only used mintShieldedToken and receiveShielded
+// this essentially combines a Faucet and an AMM, and is OK for testing purposes
+
 import CompactStandardLibrary;
 
 // Swap fee in basis points (e.g. 10 = 0.1%)
 export ledger feeBps: Uint<16>;
-
-// Where the accumulated fees are sent (unshielded)
-export ledger treasury: Either<ContractAddress, UserAddress>;
 
 // The fee is only charged on the X side
 export ledger xRewards: Uint<128>;
@@ -14,47 +14,48 @@ export ledger xRewards: Uint<128>;
 // Though this number is available in QualifiedShieldedCoinInfo, we want this to be publicly readable once Midnight/Compact supports cross-contract calls
 export ledger xLiquidity: Uint<128>;
 
-export ledger xColor: Bytes<32>;
-
 export ledger yLiquidity: Uint<128>;
-
-export ledger yColor: Bytes<32>;
-
-export ledger lpTotalSupply: Uint<128>;
 
 export ledger lpCirculatingSupply: Uint<128>;
 
-export ledger coins: Map<Uint<8>, QualifiedShieldedCoinInfo>;
-
 // Only initializes the ledger contract state but doesn't yet initialize the liquidity 
 constructor(
-    f: Uint<16>,
-    t: Either<ContractAddress, UserAddress>,
-    xc: Bytes<32>, 
-    yc: Bytes<32>
+    f: Uint<16>
 ) {
     // Fee must be less than 100% (10000 basis points)
     assert(f < 10000, "Fee too high");
 
     feeBps = disclose(f);
-    treasury = disclose(t);
     xRewards = 0;
     xLiquidity = 0;
-    xColor = disclose(xc);
     yLiquidity = 0;
-    yColor = disclose(yc);
-    lpTotalSupply = 0;
     lpCirculatingSupply = 0;
 }
 
-// useful for using AMM prices as Oracle feeds directly in other contracts
-export circuit getXLiquidity(): Uint<128> {
-    return xLiquidity;
+export circuit mintTestTokensX(
+    xOut: Uint<64>, 
+    recipient: Either<ZswapCoinPublicKey, ContractAddress>,
+    nonce: Bytes<32>
+): [] {
+    mintShieldedToken(
+        getXTokenName(),
+        disclose(xOut),
+        disclose(nonce),
+        disclose(recipient)
+    );
 }
 
-// useful for using AMM prices as Oracle feeds directly in other contracts
-export circuit getYLiquidity(): Uint<128> {
-    return yLiquidity;
+export circuit mintTestTokensY(
+    yOut: Uint<64>,
+    recipient: Either<ZswapCoinPublicKey, ContractAddress>,
+    nonce: Bytes<32>
+): [] {
+    mintShieldedToken(
+        getYTokenName(),
+        disclose(yOut),
+        disclose(nonce),
+        disclose(recipient)
+    );
 }
 
 // receive xIn
@@ -74,55 +75,32 @@ export circuit initLiquidity(
     lpCirculatingSupply = disclose(lpOut);
     mintShieldedToken(
         getLPTokenName(),
-        disclose(lpOut), // 18446744073709551615
+        disclose(lpOut),
         disclose(nonce),
         disclose(recipient)
     );
 
-    createZswapOutput(
-        ShieldedCoinInfo{
-            disclose(nonce),
-            getLPTokenColor(),
-            disclose(lpOut)
-        },
-        recipient
-    );
-
-    //// send remaining lp tokens back to contract (unshielded)
-    receiveUnshielded(
-        getLPTokenColor(),
-        lpTotalSupply - lpCirculatingSupply
-    );
-
-    const contractAddress = getShieldedContractAddress();
-
-    // send the x liquidity to the contract (unshielded)
+    // send the x liquidity to the contract
     xLiquidity = disclose(xIn);
-    const xCoin = ShieldedCoinInfo{
-        pad(32, ""),
-        xColor,
+    receiveShielded(ShieldedCoinInfo{
+        disclose(nonce),
+        getXTokenColor(),
         xLiquidity
-    };
-    receiveShielded(xCoin);
-    coins.insertCoin(0, xCoin, contractAddress);
+    });
 
-    // send the y liquidity to the contract (unshielded)
+    // send the y liquidity to the contract
     yLiquidity = disclose(yIn);
-    const yCoin = ShieldedCoinInfo{
-        pad(32, ""),
-        yColor,
+    receiveShielded(ShieldedCoinInfo{
+        disclose(nonce),
+        getYTokenColor(),
         yLiquidity
-    };
-    receiveShielded(yCoin);
-    coins.insertCoin(1, yCoin, contractAddress);
+    });
 }
 
 // receive xLiquidity + xIn
 // receive yLiquidity + yIn
 // receive 
 export circuit addLiquidity(
-    xCoin: QualifiedShieldedCoinInfo,
-    yCoin: QualifiedShieldedCoinInfo,
     xIn: Uint<64>,
     yIn: Uint<64>,
     lpOut: Uint<64>,
@@ -135,39 +113,41 @@ export circuit addLiquidity(
     const yLiquidityAdded = disclose(yIn);
 
     if (xLiquidityAdded * yLiquidity < yLiquidityAdded * xLiquidity) {
-        assert(lpOut * xLiquidity <= xLiquidityAdded * lpCirculatingSupply, "Too many LP tokens taken (bound by xIn)");
+        const xLhs = lpOut * xLiquidity;
+        const xRhs = xLiquidityAdded * lpCirculatingSupply;
+        assert(xLhs <= xRhs, "Too many LP tokens taken (bound by xIn)");
     } else {
-        assert(lpOut * yLiquidity <= yLiquidityAdded * lpCirculatingSupply, "Too many LP tokens taken (bound by yIn)");
+        const yLhs = lpOut * yLiquidity;
+        const yRhs = yLiquidityAdded * lpCirculatingSupply;
+        assert(yLhs <= yRhs, "Too many LP tokens taken (bound by yIn)");
     }
 
     // send lp tokens to recipient (shielded)
     lpCirculatingSupply = lpCirculatingSupply + disclose(lpOut) as Uint<128>;
     mintShieldedToken(
         getLPTokenName(),
-        disclose(lpOut), // 18446744073709551615
+        disclose(lpOut),
         disclose(nonce),
         disclose(recipient)
     );
 
     // send old+new x liquidity to contract (unshielded)
     xLiquidity = xLiquidity + xLiquidityAdded as Uint<128>;
-    createZswapInput(xCoin);
     receiveShielded(
         ShieldedCoinInfo{
-            pad(32, ""),
-            xColor,
-            xLiquidity
+            disclose(nonce),
+            getXTokenColor(),
+            xLiquidityAdded
         }
     );
 
     // send old+new y liquidity to contract (unshielded)
     yLiquidity = yLiquidity + yLiquidityAdded as Uint<128>;
-    createZswapInput(yCoin);
     receiveShielded(
         ShieldedCoinInfo{
-            pad(32, ""),
-            yColor,
-            yLiquidity
+            disclose(nonce),
+            getYTokenColor(),
+            yLiquidityAdded
         }
     );
 }
@@ -179,54 +159,38 @@ export circuit removeLiquidity(
     recipient: Either<ZswapCoinPublicKey, ContractAddress>,
     nonce: Bytes<32>
 ): [] {
-    assert(xOut * lpCirculatingSupply <= lpIn * xLiquidity, "Too many X tokens taken");
-    assert(yOut * lpCirculatingSupply <= lpIn * yLiquidity, "Too many Y tokens taken");
+    const xLhs = xOut * lpCirculatingSupply;
+    const xRhs = lpIn * xLiquidity;
+    assert(xLhs <= xRhs, "Too many X tokens taken");
+    
+    const yLhs = yOut * lpCirculatingSupply;
+    const yRhs = lpIn * yLiquidity;
+    assert(yLhs <= yRhs, "Too many Y tokens taken");
 
-    // send all lp tokens to contract (unshielded)
+    // send all lp tokens to contract
     lpCirculatingSupply = lpCirculatingSupply - disclose(lpIn);
-    receiveUnshielded(
+    receiveShielded(ShieldedCoinInfo{
+        disclose(nonce),
         getLPTokenColor(),
-        lpTotalSupply - lpCirculatingSupply
-    );
+        disclose(lpIn)
+    });
 
-    // send x tokens to recipient (shielded)
-    createZswapOutput(
-        ShieldedCoinInfo{
-            disclose(nonce),
-            xColor,
-            disclose(xOut)
-        },
-        recipient
-    );
-
-    // send remaining x liquidity to contract (unshielded)
+    // send x tokens to recipient
     xLiquidity = xLiquidity - disclose(xOut);
-    receiveShielded(
-        ShieldedCoinInfo{
-            disclose(nonce),
-            xColor,
-            xLiquidity + xRewards as Uint<128>
-        }
+    mintShieldedToken(
+        getXTokenName(),
+        disclose(xOut),
+        disclose(nonce),
+        disclose(recipient)
     );
 
-    // send y tokens to recipient (shielded)
-    createZswapOutput(
-        ShieldedCoinInfo{
-            disclose(nonce),
-            yColor,
-            disclose(yOut)
-        },
-        recipient
-    );
-
-    // send remaining y liquidity to contract (unshielded)
+    // send y tokens to recipient
     yLiquidity = yLiquidity - disclose(yOut);
-    receiveShielded(
-        ShieldedCoinInfo{
-            disclose(nonce),
-            yColor,
-            yLiquidity
-        }
+    mintShieldedToken(
+        getYTokenName(),
+        disclose(yOut),
+        disclose(nonce),
+        disclose(recipient)
     );
 }
 
@@ -241,29 +205,22 @@ export circuit swapXToY(
 
     const initialK = calcK(xLiquidity, yLiquidity);
 
-    // send old+new x liquidity to contract (unshielded)
+    // send x liquidity to contract
     xRewards = xRewards + disclose(xFee) as Uint<128>;
     xLiquidity = xLiquidity + disclose(xIn - xFee) as Uint<128>;
-    receiveUnshielded(
-        xColor,
-        xLiquidity + xRewards as Uint<128>
-    );
+    receiveShielded(ShieldedCoinInfo{
+        disclose(nonce),
+        getXTokenColor(),
+        disclose(xIn)
+    });
 
-    // send y tokens to recipient (shielded)
-    createZswapOutput(
-        ShieldedCoinInfo{
-            disclose(nonce),
-            yColor,
-            disclose(yOut)
-        },
-        recipient
-    );
-
-    // send remaining y liquidity to contract (unshielded)
+    // send y tokens to recipient
     yLiquidity = yLiquidity - disclose(yOut);
-    receiveUnshielded(
-        yColor,
-        yLiquidity
+    mintShieldedToken(
+        getYTokenName(),
+        disclose(yOut),
+        disclose(nonce),
+        disclose(recipient)
     );
 
     const finalK = calcK(xLiquidity, yLiquidity);
@@ -282,19 +239,14 @@ export circuit swapYToX(
 
     const initialK = calcK(xLiquidity, yLiquidity);
 
-    // send x tokens to recipient (shielded)
-    createZswapOutput(ShieldedCoinInfo{
-        disclose(nonce),
-        xColor,
-        disclose(xOut)
-    }, recipient);
-
-    // send remaining x liquidity to contract (unshielded)
+    // send x tokens to recipient
     xRewards = xRewards + disclose(xFee) as Uint<128>;
     xLiquidity = xLiquidity - disclose(xOut + xFee);
-    receiveUnshielded(
-        xColor,
-        xLiquidity + xRewards as Uint<128>
+    mintShieldedToken(
+        getXTokenColor(),
+        disclose(xOut),
+        disclose(nonce),
+        disclose(recipient)
     );
 
     // send old+new y liquidity to contract (unshielded)
@@ -302,8 +254,8 @@ export circuit swapYToX(
     receiveShielded(
         ShieldedCoinInfo{
             disclose(nonce),
-            yColor,
-            yLiquidity
+            getYTokenColor(),
+            disclose(yIn)
         }
     );
 
@@ -312,26 +264,24 @@ export circuit swapYToX(
     assert(finalK >= initialK, "Final k smaller than initial k");
 }
 
-export circuit rewardTreasury(): [] {
-    // send x liquidity to contract (unshielded)
-    receiveUnshielded(
-        xColor,
-        xLiquidity
-    );
-
-    // send x reserves to treasury (unshielded
-    sendUnshielded(
-        xColor,
-        xRewards,
-        treasury
-    );
-
-    xRewards = 0;
-}
-
-
 circuit getLPTokenName(): Bytes<32> {
     return pad(32, "Pulse LP Token");
+}
+
+circuit getXTokenName(): Bytes<32> {
+    return pad(32, "Test token X");
+}
+
+circuit getXTokenColor(): Bytes<32> {
+    return tokenType(getXTokenName(), kernel.self());
+}
+
+circuit getYTokenName(): Bytes<32> {
+    return pad(32, "Test token Y");
+}
+
+circuit getYTokenColor(): Bytes<32> {
+    return tokenType(getYTokenName(), kernel.self());
 }
 
 circuit getLPTokenColor(): Bytes<32> {
