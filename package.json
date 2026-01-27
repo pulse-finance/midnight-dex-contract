@@ -8,7 +8,7 @@
     "./faucet-amm": "./dist/faucet-amm/contract/index.js"
   },
   "scripts": {
-    "build": "pnpm run build:amm && pnpm run build:faucet && pnpm run build:faucet-amm",
+    "build": "pnpm run build:faucet-amm",
     "build:amm": "compactc ./src/AMM.compact ./dist/amm",
     "build:faucet-amm": "compactc ./src/FaucetAMM.compact ./dist/faucet-amm",
     "build:faucet": "compactc ./src/Faucet.compact ./dist/faucet",
