@@ -1,4 +1,4 @@
-pragma language_version 0.21;
+pragma language_version >= 0.20;
 
 // the FaucetAMM contract only used mintShieldedToken and receiveShielded
 // this essentially combines a Faucet and an AMM, and is OK for testing purposes
