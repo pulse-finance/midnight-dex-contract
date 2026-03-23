@@ -74,55 +74,30 @@ export circuit initLiquidity(
     lpCirculatingSupply = disclose(lpOut);
     mintShieldedToken(
         getLPTokenName(),
-        disclose(lpOut), // 18446744073709551615
+        disclose(lpOut),
         disclose(nonce),
         disclose(recipient)
     );
 
-    createZswapOutput(
-        ShieldedCoinInfo{
-            disclose(nonce),
-            getLPTokenColor(),
-            disclose(lpOut)
-        },
-        recipient
-    );
-
-    //// send remaining lp tokens back to contract (unshielded)
-    receiveUnshielded(
-        getLPTokenColor(),
-        lpTotalSupply - lpCirculatingSupply
-    );
-
-    const contractAddress = getShieldedContractAddress();
-
     // send the x liquidity to the contract (unshielded)
     xLiquidity = disclose(xIn);
-    const xCoin = ShieldedCoinInfo{
-        pad(32, ""),
+    receiveUnshielded(
         xColor,
         xLiquidity
-    };
-    receiveShielded(xCoin);
-    coins.insertCoin(0, xCoin, contractAddress);
+    );
 
     // send the y liquidity to the contract (unshielded)
     yLiquidity = disclose(yIn);
-    const yCoin = ShieldedCoinInfo{
-        pad(32, ""),
+    receiveUnshielded(
         yColor,
         yLiquidity
-    };
-    receiveShielded(yCoin);
-    coins.insertCoin(1, yCoin, contractAddress);
+    );
 }
 
 // receive xLiquidity + xIn
 // receive yLiquidity + yIn
 // receive 
 export circuit addLiquidity(
-    xCoin: QualifiedShieldedCoinInfo,
-    yCoin: QualifiedShieldedCoinInfo,
     xIn: Uint<64>,
     yIn: Uint<64>,
     lpOut: Uint<64>,
@@ -135,9 +110,13 @@ export circuit addLiquidity(
     const yLiquidityAdded = disclose(yIn);
 
     if (xLiquidityAdded * yLiquidity < yLiquidityAdded * xLiquidity) {
-        assert(lpOut * xLiquidity <= xLiquidityAdded * lpCirculatingSupply, "Too many LP tokens taken (bound by xIn)");
+        const xLhs = lpOut * xLiquidity;
+        const xRhs = xLiquidityAdded * lpCirculatingSupply;
+        assert(xLhs <= xRhs, "Too many LP tokens taken (bound by xIn)");
     } else {
-        assert(lpOut * yLiquidity <= yLiquidityAdded * lpCirculatingSupply, "Too many LP tokens taken (bound by yIn)");
+        const yLhs = lpOut * yLiquidity;
+        const yRhs = yLiquidityAdded * lpCirculatingSupply;
+        assert(yLhs <= yRhs, "Too many LP tokens taken (bound by yIn)");
     }
 
     // send lp tokens to recipient (shielded)
@@ -151,24 +130,16 @@ export circuit addLiquidity(
 
     // send old+new x liquidity to contract (unshielded)
     xLiquidity = xLiquidity + xLiquidityAdded as Uint<128>;
-    createZswapInput(xCoin);
-    receiveShielded(
-        ShieldedCoinInfo{
-            pad(32, ""),
-            xColor,
-            xLiquidity
-        }
+    receiveUnshielded(
+        xColor,
+        xLiquidityAdded
     );
 
     // send old+new y liquidity to contract (unshielded)
     yLiquidity = yLiquidity + yLiquidityAdded as Uint<128>;
-    createZswapInput(yCoin);
-    receiveShielded(
-        ShieldedCoinInfo{
-            pad(32, ""),
-            yColor,
-            yLiquidity
-        }
+    receiveUnshielded(
+        yColor,
+        yLiquidityAdded
     );
 }
 
@@ -179,14 +150,19 @@ export circuit removeLiquidity(
     recipient: Either<ZswapCoinPublicKey, ContractAddress>,
     nonce: Bytes<32>
 ): [] {
-    assert(xOut * lpCirculatingSupply <= lpIn * xLiquidity, "Too many X tokens taken");
-    assert(yOut * lpCirculatingSupply <= lpIn * yLiquidity, "Too many Y tokens taken");
+    const xLhs = xOut * lpCirculatingSupply;
+    const xRhs = lpIn * xLiquidity;
+    assert(xLhs <= xRhs, "Too many X tokens taken");
+    
+    const yLhs = yOut * lpCirculatingSupply;
+    const yRhs = lpIn * yLiquidity;
+    assert(yLhs <= yRhs, "Too many Y tokens taken");
 
-    // send all lp tokens to contract (unshielded)
+    // send all lp tokens to contract (unshielded) (TODO: burn LP)
     lpCirculatingSupply = lpCirculatingSupply - disclose(lpIn);
     receiveUnshielded(
         getLPTokenColor(),
-        lpTotalSupply - lpCirculatingSupply
+        disclose(lpIn)
     );
 
     // send x tokens to recipient (shielded)
@@ -201,12 +177,10 @@ export circuit removeLiquidity(
 
     // send remaining x liquidity to contract (unshielded)
     xLiquidity = xLiquidity - disclose(xOut);
-    receiveShielded(
-        ShieldedCoinInfo{
-            disclose(nonce),
-            xColor,
-            xLiquidity + xRewards as Uint<128>
-        }
+    sendUnshielded(
+        xColor,
+        xLiquidity + xRewards as Uint<128>,
+        left<ContractAddress, UserAddress>(kernel.self())
     );
 
     // send y tokens to recipient (shielded)
@@ -221,12 +195,10 @@ export circuit removeLiquidity(
 
     // send remaining y liquidity to contract (unshielded)
     yLiquidity = yLiquidity - disclose(yOut);
-    receiveShielded(
-        ShieldedCoinInfo{
-            disclose(nonce),
-            yColor,
-            yLiquidity
-        }
+    sendUnshielded(
+        yColor,
+        yLiquidity,
+        left<ContractAddress, UserAddress>(kernel.self())
     );
 }
 
@@ -244,9 +216,10 @@ export circuit swapXToY(
     // send old+new x liquidity to contract (unshielded)
     xRewards = xRewards + disclose(xFee) as Uint<128>;
     xLiquidity = xLiquidity + disclose(xIn - xFee) as Uint<128>;
-    receiveUnshielded(
+    sendUnshielded(
         xColor,
-        xLiquidity + xRewards as Uint<128>
+        xLiquidity + xRewards as Uint<128>,
+        left<ContractAddress, UserAddress>(kernel.self())
     );
 
     // send y tokens to recipient (shielded)
@@ -261,9 +234,10 @@ export circuit swapXToY(
 
     // send remaining y liquidity to contract (unshielded)
     yLiquidity = yLiquidity - disclose(yOut);
-    receiveUnshielded(
+    sendUnshielded(
         yColor,
-        yLiquidity
+        yLiquidity,
+        left<ContractAddress, UserAddress>(kernel.self())
     );
 
     const finalK = calcK(xLiquidity, yLiquidity);
@@ -292,19 +266,18 @@ export circuit swapYToX(
     // send remaining x liquidity to contract (unshielded)
     xRewards = xRewards + disclose(xFee) as Uint<128>;
     xLiquidity = xLiquidity - disclose(xOut + xFee);
-    receiveUnshielded(
+    sendUnshielded(
         xColor,
-        xLiquidity + xRewards as Uint<128>
+        xLiquidity + xRewards as Uint<128>,
+        left<ContractAddress, UserAddress>(kernel.self())
     );
 
     // send old+new y liquidity to contract (unshielded)
     yLiquidity = yLiquidity + disclose(yIn) as Uint<128>;
-    receiveShielded(
-        ShieldedCoinInfo{
-            disclose(nonce),
-            yColor,
-            yLiquidity
-        }
+    sendUnshielded(
+        yColor,
+        yLiquidity,
+        left<ContractAddress, UserAddress>(kernel.self())
     );
 
     const finalK = calcK(xLiquidity, yLiquidity);
@@ -314,9 +287,10 @@ export circuit swapYToX(
 
 export circuit rewardTreasury(): [] {
     // send x liquidity to contract (unshielded)
-    receiveUnshielded(
+    sendUnshielded(
         xColor,
-        xLiquidity
+        xLiquidity,
+        left<ContractAddress, UserAddress>(kernel.self())
     );
 
     // send x reserves to treasury (unshielded
@@ -336,22 +310,6 @@ circuit getLPTokenName(): Bytes<32> {
 
 circuit getLPTokenColor(): Bytes<32> {
     return tokenType(getLPTokenName(), kernel.self());
-}
-
-circuit getUnshieldedContractAddress(): Either<ContractAddress, UserAddress> {
-    return Either<ContractAddress, UserAddress> {
-        true,
-        kernel.self(),
-        UserAddress{bytes: pad(32, "")}
-    };
-}
-
-circuit getShieldedContractAddress(): Either<ZswapCoinPublicKey, ContractAddress> {
-    return Either<ZswapCoinPublicKey, ContractAddress> {
-        false,
-        ZswapCoinPublicKey{bytes: pad(32, "")},
-        kernel.self()
-    };
 }
 
 circuit calcK(x: Uint<128>, y: Uint<128>): Uint<248> {

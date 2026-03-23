@@ -4,11 +4,10 @@
   "description": "Compact contracts for Pulse's Midnight DEX",
   "exports": {
     "./amm": "./dist/amm/contract/index.js",
-    "./faucet": "./dist/faucet/contract/index.js",
-    "./faucet-amm": "./dist/faucet-amm/contract/index.js"
+    "./faucet": "./dist/faucet/contract/index.js"
   },
   "scripts": {
-    "build": "pnpm run build:faucet-amm",
+    "build": "pnpm run build:faucet && pnpm run build:amm",
     "build:amm": "compact compile ./src/AMM.compact ./dist/amm",
     "build:faucet-amm": "compact compile ./src/FaucetAMM.compact ./dist/faucet-amm",
     "build:faucet": "compact compile ./src/Faucet.compact ./dist/faucet",

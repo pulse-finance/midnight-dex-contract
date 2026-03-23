@@ -2,18 +2,10 @@ pragma language_version >= 0.22;
 
 import CompactStandardLibrary;
 
-export ledger circulatingSupply: Map<Bytes<32>, Uint<128>>;
-
-// TODO: can we mint inside the constructor? No: because apparantly contract address isn't yet available inside constructor
+// We can't mint inside the constructor because the contract address isn't yet available
 constructor() {}
 
 export circuit mintShielded(tokenName: Bytes<32>, quantity: Uint<64>, nonce: Bytes<32>, receiver: Either<ZswapCoinPublicKey, ContractAddress>): [] {
-    if (circulatingSupply.member(disclose(tokenName))) {
-        circulatingSupply.insert(disclose(tokenName), circulatingSupply.lookup(disclose(tokenName)) + disclose(quantity) as Uint<128>);
-    } else {
-        circulatingSupply.insert(disclose(tokenName), disclose(quantity));
-    }
-
     mintShieldedToken(
         disclose(tokenName),
         disclose(quantity),
@@ -23,12 +15,6 @@ export circuit mintShielded(tokenName: Bytes<32>, quantity: Uint<64>, nonce: Byt
 }
 
 export circuit mintUnshielded(tokenName: Bytes<32>, quantity: Uint<64>, receiver: Either<ContractAddress, UserAddress>): [] {
-    if (circulatingSupply.member(disclose(tokenName))) {
-        circulatingSupply.insert(disclose(tokenName), circulatingSupply.lookup(disclose(tokenName)) + disclose(quantity) as Uint<128>);
-    } else {
-        circulatingSupply.insert(disclose(tokenName), disclose(quantity));
-    }
-
     mintUnshieldedToken(
         disclose(tokenName),
         disclose(quantity),
