@@ -332,8 +332,8 @@ export circuit swapYToX(
         disclose(yIn)
     };
 
-    // hopefully we can get merging to work in the same tx, just test this in the frontend
-    //assert(cleanYLiquidity, "this tx would overwrite previous 2nd yCoin");
+    // this line causes Lace to throw error 186 upon submission
+    assert(!coins.member(3), "this tx would overwrite previous 2nd yCoin");
 
     receiveShielded(inputYCoin);
     coins.insertCoin(3, inputYCoin, contractAddress);
