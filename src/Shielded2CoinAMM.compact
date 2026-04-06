@@ -31,9 +31,6 @@ export ledger lpCirculatingSupply: Uint<128>;
 // 3: secondary storage of y
 export ledger coins: Map<Uint<8>, QualifiedShieldedCoinInfo>;
 
-export ledger cleanYLiquidity: Boolean;
-
-
 // Only initializes the ledger contract state but doesn't yet initialize the liquidity 
 constructor(
     f: Uint<16>,
@@ -53,7 +50,6 @@ constructor(
     yColor = disclose(yc);
     lpTotalSupply = 0;
     lpCirculatingSupply = 0;
-    cleanYLiquidity = true;
 }
 
 // useful for using AMM prices as Oracle feeds directly in other contracts
@@ -108,9 +104,10 @@ export circuit initLiquidity(
         yLiquidity
     };
     receiveShielded(yCoin);
-    coins.insertCoin(1, yCoin, contractAddress);
+    coins.insertCoin(2, yCoin, contractAddress);
 }
 
+// TODO: only one-step zap-in
 // receive xLiquidity + xIn
 // receive yLiquidity + yIn
 // receive 
@@ -126,7 +123,6 @@ export circuit addLiquidity(
     //}
     //assert(lpCirculatingSupply > 0, "Not yet initialized");
 
-    assert(cleanYLiquidity, "y not clean");
     //cleanYLiquidity = false;
 
     const xLiquidityAdded = disclose(xIn);
@@ -174,7 +170,7 @@ export circuit addLiquidity(
         xLiquidityAdded
     };
     receiveShielded(inputXCoin);
-    coins.insertCoin(2, inputXCoin, contractAddress);
+    coins.insertCoin(1, inputXCoin, contractAddress);
 
     //createZswapOutput(mergedXCoin, contractAddress);
     //receiveShielded(mergedXCoin);
@@ -192,9 +188,9 @@ export circuit addLiquidity(
     //createZswapOutput(mergedYCoin, contractAddress);
     receiveShielded(inputYCoin);
     coins.insertCoin(3, inputYCoin, contractAddress);
-    cleanYLiquidity = false;
 }
 
+// TODO: only one-step zap-out
 export circuit removeLiquidity(
     lpIn: Uint<64>,
     xOut: Uint<64>,
@@ -261,16 +257,14 @@ export circuit swapXToY(
     recipient: Either<ZswapCoinPublicKey, ContractAddress>,
     nonce: Bytes<32>
 ): [] {
-    //assert(xFee * 10000 >= xIn * feeBps, "Fee too low");
+    assert(xFee * 10000 >= xIn * feeBps, "Fee too low");
 
     const contractAddress = getShieldedContractAddress();
-    //const xCoin: QualifiedShieldedCoinInfo = coins.lookup(0);
-    const yCoin: QualifiedShieldedCoinInfo = coins.lookup(1);
+    const yCoin: QualifiedShieldedCoinInfo = coins.lookup(3);
 
-    //const initialK = calcK(xLiquidity, yLiquidity);
+    const initialK = calcK(xLiquidity, yLiquidity);
 
     // consume the previous x liquidity note and replace it with a merged note
-    //createZswapInput(xCoin);
     xRewards = xRewards + disclose(xFee) as Uint<128>;
     xLiquidity = xLiquidity + disclose(xIn - xFee) as Uint<128>;
     const inputXCoin = ShieldedCoinInfo{
@@ -280,29 +274,21 @@ export circuit swapXToY(
     };
 
     receiveShielded(inputXCoin);
-    coins.insertCoin(2, inputXCoin, contractAddress);
-
-    //createZswapOutput(mergedXCoin, contractAddress);
-    //coins.insertCoin(0, mergedXCoin, contractAddress);
+    assert(!coins.member(1), "2nd x coin already occupied");
+    coins.insertCoin(1, inputXCoin, contractAddress);
 
     // send y tokens to recipient (shielded)
     yLiquidity = yLiquidity - disclose(yOut);
-    const sendYResult = sendShielded(yCoin, disclose(recipient), disclose(yOut));
-    coins.insertCoin(1, sendYResult.change.value, contractAddress);
+    //const sendYResult = sendShielded(yCoin, disclose(recipient), disclose(yOut));
+    //assert(!sendYResult.change.is_some, "unexpected Y change");
+    assert(yCoin.value == disclose(yOut), "invalid y coin value");
+    createZswapInput(yCoin);
+    
+    coins.remove(3);
 
-    //createZswapInput(yCoin);
-    //createZswapOutput(
-    //    ShieldedCoinInfo{
-    //        disclose(nonce),
-    //        yColor,
-    //        disclose(yOut)
-    //    },
-    //    recipient
-    //);
+    const finalK = calcK(xLiquidity, yLiquidity);
 
-    //const finalK = calcK(xLiquidity, yLiquidity);
-
-    //assert(finalK >= initialK, "Final k smaller than initial k");
+    assert(finalK >= initialK, "Final k smaller than initial k");
 }
 
 export circuit swapYToX(
@@ -312,37 +298,19 @@ export circuit swapYToX(
     recipient: Either<ZswapCoinPublicKey, ContractAddress>,
     nonce: Bytes<32>
 ): [] {
-    //commented out in attempt to save on tx size for testnet 
-    //assert(xFee * (10000 - feeBps) >= xOut * feeBps, "Fee too low");
+    assert(xFee * (10000 - feeBps) >= xOut * feeBps, "Fee too low");
 
     const contractAddress = getShieldedContractAddress();
-    const xCoin: QualifiedShieldedCoinInfo = coins.lookup(0);
-    //const yCoin: QualifiedShieldedCoinInfo = coins.lookup(1);
+    const xCoin: QualifiedShieldedCoinInfo = coins.lookup(1);
 
-    //commented out in attempt to save on tx size for testnet 
-    //const initialK = calcK(xLiquidity, yLiquidity);
-
-    //createZswapInput(xCoin);
-
-    // send x tokens to recipient (shielded)
-    // TODO: can we simply rely on balancing?
-    //createZswapOutput(ShieldedCoinInfo{
-    //    disclose(nonce),
-    //    xColor,
-    //    disclose(xOut)
-    //}, recipient);
+    const initialK = calcK(xLiquidity, yLiquidity);
 
     // return the remaining x liquidity to the contract (shielded)
     xRewards = xRewards + disclose(xFee) as Uint<128>;
     xLiquidity = xLiquidity - disclose(xOut + xFee);
-    //const remainingXCoin = ShieldedCoinInfo{
-    //    disclose(nonce),
-    //    xColor,
-    //    xLiquidity + xRewards as Uint<128>
-    //};
-
     const sendXResult = sendShielded(xCoin, disclose(recipient), disclose(xOut));
-    coins.insertCoin(0, sendXResult.change.value, contractAddress);
+    assert(!sendXResult.change.is_some, "unexpected x change");
+    coins.remove(1);
 
     // consume the previous y liquidity note and replace it with a merged note
     // TODO: create a batcher that merges coins stored at 1 and 3
@@ -356,21 +324,18 @@ export circuit swapYToX(
     };
 
     // this line causes Lace to throw error 186 upon submission
-    //assert(!coins.member(3), "this tx would overwrite previous 2nd yCoin");
+    assert(!coins.member(3), "this tx would overwrite previous 2nd yCoin");
 
     receiveShielded(inputYCoin);
     coins.insertCoin(3, inputYCoin, contractAddress);
 
-    //createZswapOutput(mergedYCoin, contractAddress);
+    // commented out in attempt to save on tx size for testnet 
+    const finalK = calcK(xLiquidity, yLiquidity);
 
     // commented out in attempt to save on tx size for testnet 
-    //const finalK = calcK(xLiquidity, yLiquidity);
-
-    // commented out in attempt to save on tx size for testnet 
-    //assert(finalK >= initialK, "Final k smaller than initial k");
+    assert(finalK >= initialK, "Final k smaller than initial k");
 }
 
-// it looks like 
 export circuit swapYToX2(
     yIn: Uint<64>,
     xFee: Uint<64>,
@@ -378,88 +343,59 @@ export circuit swapYToX2(
     recipient: Either<ZswapCoinPublicKey, ContractAddress>,
     nonce: Bytes<32>
 ): [] {
-    // can we do these calculations on-chain?
-    //commented out in attempt to save on tx size for testnet 
-    assert(xFee * (10000 - feeBps) >= xOut * feeBps, "Fee too low");
-    assert(cleanYLiquidity, "This tx would overwrite previous 2nd yCoin");
-
-    const contractAddress = getShieldedContractAddress();
-    const xCoin: QualifiedShieldedCoinInfo = coins.lookup(0);
-    //const yCoin: QualifiedShieldedCoinInfo = coins.lookup(1);
-
-    //commented out in attempt to save on tx size for testnet 
-    //const initialK = calcK(xLiquidity, yLiquidity);
-
-    //createZswapInput(xCoin);
-
-    // send x tokens to recipient (shielded)
-    // TODO: can we simply rely on balancing?
-    //createZswapOutput(ShieldedCoinInfo{
-    //    disclose(nonce),
-    //    xColor,
-    //    disclose(xOut)
-    //}, recipient);
-
-    // return the remaining x liquidity to the contract (shielded)
-    xRewards = xRewards + disclose(xFee) as Uint<128>;
-    xLiquidity = xLiquidity - disclose(xOut + xFee);
-    //const remainingXCoin = ShieldedCoinInfo{
-    //    disclose(nonce),
-    //    xColor,
-    //    xLiquidity + xRewards as Uint<128>
-    //};
-
-    //createZswapOutput(remainingXCoin, contractAddress);
-
-    const sendXResult = sendShielded(xCoin, disclose(recipient), disclose(xOut));
-    //coins.insertCoin(0, remainingXCoin, contractAddress);
-    coins.insertCoin(0, sendXResult.change.value, contractAddress);
-
-    // consume the previous y liquidity note and replace it with a merged note
-    // TODO: create a batcher that merges coins stored at 1 and 3
-    // commented out in an attempt to decrease tx size
-    //createZswapInput(yCoin);
-    //yLiquidity = yLiquidity + disclose(yIn) as Uint<128>;
-    //const inputYCoin = ShieldedCoinInfo{
-    //    disclose(nonce),
-    //    yColor,
-    //    disclose(yIn)
-    //};
-//
-    //receiveShielded(inputYCoin);
-    //coins.insertCoin(3, inputYCoin, contractAddress);
-    //cleanYLiquidity = false;
-
-    //createZswapOutput(mergedYCoin, contractAddress);
-
-    // commented out in attempt to save on tx size for testnet 
-    //const finalK = calcK(xLiquidity, yLiquidity);
-
-    // commented out in attempt to save on tx size for testnet 
-    //assert(finalK >= initialK, "Final k smaller than initial k");
+    //assert(xFee * (10000 - feeBps) >= xOut * feeBps, "Fee too low");
+    //const contractAddress = getShieldedContractAddress();
+    const xCoin: QualifiedShieldedCoinInfo = coins.lookup(1);
+    assert(xCoin.value == disclose(xOut), "invalid x coin value");
+    sendShielded(xCoin, disclose(recipient), disclose(xOut));
+    //assert(!sendXResult.change.is_some, "unexpected x change");
+    coins.remove(1);
 }
 
+// TODO: include disincentive for non-treasury user to perfrom this action
 export circuit mergeXLiquidity(): [] {
     const contractAddress = getShieldedContractAddress();
     const xCoin1: QualifiedShieldedCoinInfo = coins.lookup(0);
-    const xCoin2: QualifiedShieldedCoinInfo = coins.lookup(2);
+    const xCoin2: QualifiedShieldedCoinInfo = coins.lookup(1);
 
     const mergedXCoin = mergeCoin(xCoin1, xCoin2);
     receiveShielded(mergedXCoin);
     coins.insertCoin(0, mergedXCoin, contractAddress);
-    coins.remove(2);
+    coins.remove(1);
 }
 
+// TODO: include disincentive for non-treasury user to perform this action
 export circuit mergeYLiquidity(): [] {
     const contractAddress = getShieldedContractAddress();
-    const yCoin1: QualifiedShieldedCoinInfo = coins.lookup(1);
+    const yCoin1: QualifiedShieldedCoinInfo = coins.lookup(2);
     const yCoin2: QualifiedShieldedCoinInfo = coins.lookup(3);
 
     const mergedYCoin = mergeCoin(yCoin1, yCoin2);
     receiveShielded(mergedYCoin);
-    coins.insertCoin(1, mergedYCoin, contractAddress);
+    coins.insertCoin(2, mergedYCoin, contractAddress);
     coins.remove(3);
-    cleanYLiquidity = true;
+}
+
+// TODO: include disincentive for non-treasury user to perform this action
+export circuit splitXLiquidity(xOut: Uint<64>): [] {
+    assert(!coins.member(1), "2nd x coin already exists");
+
+    const contractAddress = getShieldedContractAddress();
+    const xCoin: QualifiedShieldedCoinInfo = coins.lookup(0);
+    const sendXResult = sendShielded(xCoin, contractAddress, disclose(xOut));
+    coins.insertCoin(0, sendXResult.change.value, contractAddress);
+    coins.insertCoin(1, sendXResult.sent, contractAddress);
+}
+
+// TODO: include disincentive for non-treasury user to perform this action
+export circuit splitYLiquidity(yOut: Uint<64>): [] {
+    assert(!coins.member(3), "2nd y coind already exists");
+
+    const contractAddress = getShieldedContractAddress();
+    const yCoin: QualifiedShieldedCoinInfo = coins.lookup(2);
+    const sendYResult = sendShielded(yCoin, contractAddress, disclose(yOut));
+    coins.insertCoin(2, sendYResult.change.value, contractAddress);
+    coins.insertCoin(3, sendYResult.sent, contractAddress);
 }
 
 export circuit rewardTreasury(): [] {
