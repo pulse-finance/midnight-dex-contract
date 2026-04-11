@@ -1,0 +1,560 @@
+pragma language_version >= 0.22;
+
+import CompactStandardLibrary;
+
+// Swap fee in basis points (e.g. 10 = 0.1%)
+export ledger feeBps: Uint<16>;
+
+// Where the accumulated fees are sent
+export ledger treasury: Either<ZswapCoinPublicKey, ContractAddress>;
+
+// The fee is only charged on the X side
+export ledger xRewards: Uint<128>;
+
+export ledger xLiquidity: Uint<128>;
+
+export ledger xColor: Bytes<32>;
+
+export ledger yLiquidity: Uint<128>;
+
+export ledger yColor: Bytes<32>;
+
+export ledger lpCirculatingSupply: Uint<128>;
+
+/**
+ * ValidateSwapXToY:
+ *   - kind: 0
+ *   - Occupies coin position 1 in coins map
+ *   - value: input X amount
+ * 
+ * CompleteSwapXToY:
+ *   - kind: 1
+ *   - value: validated output Y amount
+ *
+ * ValidateSwapYToX:
+ *   - kind: 2
+ *   - Occupies coin position 3 in coins map
+ *
+ * CompleteSwapYToX:
+ *   - kind: 3
+ *   - value: validated output X amount
+ * 
+ * ValidateAddLiquidity:
+ *   - kind: 4
+ *   - value: input X amount
+ *   - altValue: input Y amount
+ * 
+ * CompleteAddLiquidity:
+ *   - kind: 5
+ *   - value: validated output LP amount
+ * 
+ * ValidateRemoveLiquidity:
+ *   - kind: 6
+ *   - value: input LP amount
+ *
+ * CompleteRemoveXLiquidity:
+ *   - kind: 7
+ *   - value: validated X output amount
+ *   - altValue: validated Y output amount
+ *
+ * CompleteRemoveYLiquidity:
+ *   - kind: 8
+ *   - value: validated Y output amount
+ */
+export struct Order {
+    kind: Uint<8>,
+    value: Uint<64>,
+    altValue: Uint<64>,
+    recipient: Either<ZswapCoinPublicKey, ContractAddress>
+}
+
+/**
+ * In the initial phase of Midnight mainnet, the state space of each contract is limited,
+ *  so we only allow a single order instead of a collection of many orders.
+ */
+export ledger pendingOrder: Maybe<Order>;
+
+/**
+ * 0: first x liquidity coin (always present)
+ * 1: second x liquidity coin (optional)
+ * 2: first y liquidity coin (always present)
+ * 3: second y liquidity coin (optional)
+ */
+export ledger coins: Map<Uint<8>, QualifiedShieldedCoinInfo>;
+
+/**
+ * The contract constructor only initializes the ledger contract state,
+ *  but doesn't yet initialize the liquidity because the contract address isn't available yet.
+ */
+constructor(
+    f: Uint<16>,
+    t: Either<ZswapCoinPublicKey, ContractAddress>,
+    xc: Bytes<32>, 
+    yc: Bytes<32>
+) {
+    // Fee must be less than 100% (10000 basis points)
+    assert(f < 10000, "Fee too high");
+
+    feeBps = disclose(f);
+    treasury = disclose(t);
+    xRewards = 0;
+    xLiquidity = 0;
+    xColor = disclose(xc);
+    yLiquidity = 0;
+    yColor = disclose(yc);
+    lpCirculatingSupply = 0;
+}
+
+// useful for using AMM prices as Oracle feeds directly in other contracts
+export circuit getXLiquidity(): Uint<128> {
+    return xLiquidity;
+}
+
+// useful for using AMM prices as Oracle feeds directly in other contracts
+export circuit getYLiquidity(): Uint<128> {
+    return yLiquidity;
+}
+
+/**
+ * Receives xIn and yIn, and then mints lpOut sending it to the recipient.
+ */
+export circuit initLiquidity(
+    xIn: Uint<64>,
+    yIn: Uint<64>,
+    lpOut: Uint<64>,
+    recipient: Either<ZswapCoinPublicKey, ContractAddress>,
+    nonce: Bytes<32>
+): [] {
+    assert(lpCirculatingSupply == 0, "Already initialized");
+    assert(lpOut*lpOut <= xIn*yIn, "Too many LP tokens taken");
+
+    // mint and send lp tokens to recipient (shielded)
+    lpCirculatingSupply = disclose(lpOut);
+    mintShieldedToken(
+        getLPTokenName(),
+        disclose(lpOut),
+        disclose(nonce),
+        disclose(recipient)
+    );
+
+    const contractAddress = getShieldedContractAddress();
+
+    // send the x liquidity to the contract (shielded)
+    xLiquidity = disclose(xIn);
+    const xCoin = ShieldedCoinInfo{
+        disclose(nonce),
+        xColor,
+        xLiquidity
+    };
+    receiveShielded(xCoin);
+    coins.insertCoin(0, xCoin, contractAddress);
+
+    // send the y liquidity to the contract (shielded)
+    yLiquidity = disclose(yIn);
+    const yCoin = ShieldedCoinInfo{
+        disclose(nonce),
+        yColor,
+        yLiquidity
+    };
+    receiveShielded(yCoin);
+    coins.insertCoin(2, yCoin, contractAddress);
+}
+
+export circuit addLiquidity(
+    xIn: Uint<64>,
+    yIn: Uint<64>,
+    recipient: Either<ZswapCoinPublicKey, ContractAddress>,
+    nonce: Bytes<32>
+): [] {
+    assert(lpCirculatingSupply > 0, "Not yet initialized");
+    assert(!pendingOrder.is_some, "Another order is pending");
+
+    const contractAddress = getShieldedContractAddress();
+
+    const inputXCoin = ShieldedCoinInfo{
+        disclose(nonce),
+        xColor,
+        disclose(xIn)
+    };
+
+    receiveShielded(inputXCoin);
+
+    assert(!coins.member(1), "Coin position 1 already occupied");
+
+    coins.insertCoin(1, inputXCoin, contractAddress);
+
+    const inputYCoin = ShieldedCoinInfo{
+        disclose(nonce),
+        yColor,
+        disclose(yIn)
+    };
+
+    receiveShielded(inputYCoin);
+
+    assert(!coins.member(3), "Coin position 3 already occupied");
+
+    coins.insertCoin(3, inputYCoin, contractAddress);
+
+    pendingOrder = some<Order>(Order{
+        4,
+        disclose(xIn),
+        disclose(yIn),
+        disclose(recipient)
+    });
+}
+
+export circuit validateAddLiquidity(
+    lpOut: Uint<64>,
+    nonce: Bytes<32>
+): [] {
+    assert(pendingOrder.is_some, "No pending order");
+
+    const order = pendingOrder.value;
+
+    assert(order.kind == 4, "Pending order isn't a ValidateAddLiquidity order");
+
+    const xIn = order.value;
+    const yIn = order.altValue;
+
+    if (xIn * yLiquidity < yIn * xLiquidity) {
+        const xLhs = disclose(lpOut) * xLiquidity;
+        const xRhs = xIn * lpCirculatingSupply;
+
+        assert(xLhs <= xRhs, "Too many LP tokens taken (bound by xIn)");
+    } else {
+        const yLhs = disclose(lpOut) * yLiquidity;
+        const yRhs = yIn * lpCirculatingSupply;
+
+        assert(yLhs <= yRhs, "Too many LP tokens taken (bound by yIn)");
+    }
+
+    lpCirculatingSupply = lpCirculatingSupply + disclose(lpOut) as Uint<128>;
+    xLiquidity = xLiquidity + xIn as Uint<128>;
+    yLiquidity = yLiquidity + yIn as Uint<128>;
+
+    // dummy mint
+    mintUnshieldedToken(
+        getValidationTokenName(),
+        1,
+        getUnshieldedContractAddress()
+    );
+
+    pendingOrder = some<Order>(Order{
+        5,
+        disclose(lpOut),
+        0,
+        order.recipient
+    });
+}
+
+export circuit completeAddLiquidity(nonce: Bytes<32>): [] {
+    assert(pendingOrder.is_some, "No pending order");
+
+    const order = pendingOrder.value;
+
+    assert(order.kind == 5, "Pending order isn't a CompleteAddLiquidity order");
+
+    mintShieldedToken(
+        getLPTokenName(),
+        order.value,
+        disclose(nonce),
+        order.recipient
+    );
+
+    pendingOrder = none<Order>();
+}
+
+export circuit removeLiquidity(
+    lpIn: Uint<64>,
+    recipient: Either<ZswapCoinPublicKey, ContractAddress>,
+    nonce: Bytes<32>
+): [] {
+    assert(!pendingOrder.is_some, "Another order is pending");
+
+    const inputLPCoin = ShieldedCoinInfo{
+        disclose(nonce),
+        getLPTokenColor(),
+        disclose(lpIn)
+    };
+
+    // receiveShielded acts as burn here, no other circuit allows spending this shielded coin
+    receiveShielded(inputLPCoin);
+
+    pendingOrder = some<Order>(Order{
+        6,
+        disclose(lpIn),
+        0,
+        disclose(recipient)
+    });
+}
+
+export circuit validateRemoveLiquidity(
+    xOut: Uint<64>,
+    yOut: Uint<64>
+): [] {
+    assert(pendingOrder.is_some, "No pending order");
+
+    const order = pendingOrder.value;
+
+    assert(order.kind == 6, "Pending order isn't a ValidateRemoveLiquidity order");
+
+    const lpIn = order.value;
+
+    const xLhs = xOut * lpCirculatingSupply;
+    const xRhs = lpIn * xLiquidity;
+    assert(xLhs <= xRhs, "Too many X tokens taken");
+    
+    const yLhs = yOut * lpCirculatingSupply;
+    const yRhs = lpIn * yLiquidity;
+    assert(yLhs <= yRhs, "Too many Y tokens taken");
+
+    lpCirculatingSupply = lpCirculatingSupply - disclose(lpIn);
+    xLiquidity = xLiquidity - disclose(xOut);
+    yLiquidity = yLiquidity - disclose(yOut);
+
+    // dummy mint
+    mintUnshieldedToken(
+        getValidationTokenName(),
+        1,
+        getUnshieldedContractAddress()
+    );
+
+    pendingOrder = some<Order>(Order{
+        7,
+        disclose(xOut),
+        disclose(yOut),
+        order.recipient
+    });
+}
+
+export circuit completeRemoveXLiquidity(): [] {
+    assert(pendingOrder.is_some, "No pending order");
+
+    const order = pendingOrder.value;
+
+    assert(order.kind == 7, "Pending order isn't a CompleteRemoveXLiquidity order");
+
+    const contractAddress = getShieldedContractAddress();
+    
+    const xCoin: QualifiedShieldedCoinInfo = coins.lookup(0);
+
+    const sendXResult = sendShielded(xCoin, order.recipient, order.value);
+
+    assert(sendXResult.change.is_some, "Expected some X change");
+
+    coins.insertCoin(0, sendXResult.change.value, contractAddress);
+    
+    if (order.altValue > 0) {
+        pendingOrder = some<Order>(Order{
+            8,
+            order.altValue,
+            0,
+            order.recipient,
+        });
+    } else {
+        pendingOrder = none<Order>();
+    }
+}
+
+export circuit completeRemoveYLiquidity(): [] {
+    assert(pendingOrder.is_some, "No pending order");
+
+    const order = pendingOrder.value;
+
+    assert(order.kind == 8, "Pending order isn't a CompleteRemoveYLiquidity order");
+
+    const contractAddress = getShieldedContractAddress();
+
+    const yCoin: QualifiedShieldedCoinInfo = coins.lookup(2);
+
+    const sendYResult = sendShielded(yCoin, order.recipient, order.value);
+
+    assert(sendYResult.change.is_some, "Expected some Y change");
+
+    coins.insertCoin(2, sendYResult.change.value, contractAddress);
+
+    pendingOrder = none<Order>();
+}
+
+export circuit swapXToY(
+    xIn: Uint<64>,
+    recipient: Either<ZswapCoinPublicKey, ContractAddress>,
+    nonce: Bytes<32>
+): [] {
+    assert(!pendingOrder.is_some, "Another order is pending");
+
+    const inputXCoin = ShieldedCoinInfo{
+        disclose(nonce),
+        xColor,
+        disclose(xIn)
+    };
+
+    receiveShielded(inputXCoin);
+
+    const contractAddress = getShieldedContractAddress();
+
+    assert(!coins.member(1), "Coin position 1 already occupied");
+    coins.insertCoin(1, inputXCoin, contractAddress);
+
+    pendingOrder = some<Order>(Order{
+        0,
+        disclose(xIn),
+        0,
+        disclose(recipient)
+    });
+}
+
+export circuit validateSwapXToY(
+    xFee: Uint<64>,
+    yOut: Uint<64>
+): [] {
+    assert(pendingOrder.is_some, "No pending order");
+    
+    const order = pendingOrder.value;
+
+    assert(order.kind == 0, "Pending order isn't a ValidateSwapXToY order");
+
+    const xIn = order.value;
+
+    assert(xFee * 10000 >= xIn * feeBps, "Fee too low");
+
+    const newXLiquidity = xLiquidity + disclose(xIn - xFee) as Uint<128>;
+    const newYLiquidity = yLiquidity - disclose(yOut);
+
+    const initialK = calcK(xLiquidity, yLiquidity);
+    const finalK = calcK(newXLiquidity, newYLiquidity);
+    assert(finalK >= initialK, "Final k smaller than initial k");
+
+    xRewards = xRewards + disclose(xFee) as Uint<128>;
+    xLiquidity = newXLiquidity;
+    yLiquidity = newYLiquidity;
+
+    pendingOrder = some<Order>(Order{
+        8,
+        disclose(yOut),
+        0,
+        order.recipient
+    });
+}
+
+export circuit swapYToX(
+    yIn: Uint<64>,
+    recipient: Either<ZswapCoinPublicKey, ContractAddress>,
+    nonce: Bytes<32>
+): [] {
+    assert(!pendingOrder.is_some, "Another order is pending");
+
+    const inputYCoin = ShieldedCoinInfo{
+        disclose(nonce),
+        yColor,
+        disclose(yIn)
+    };
+
+    receiveShielded(inputYCoin);
+
+    assert(!coins.member(3), "Coin position 3 already occupied");
+
+    const contractAddress = getShieldedContractAddress();
+
+    coins.insertCoin(3, inputYCoin, contractAddress);
+
+    pendingOrder = some<Order>(Order{
+        2,
+        disclose(yIn),
+        0,
+        disclose(recipient)
+    });
+}
+
+export circuit validateSwapYToX(
+    xFee: Uint<64>,
+    xOut: Uint<64>
+): [] {
+    assert(pendingOrder.is_some, "No pending order");
+
+    const order = pendingOrder.value;
+
+    assert(order.kind == 2, "Pending order isn't a ValidateSwapYToX order");
+
+    assert(xFee * (10000 - feeBps) >= xOut * feeBps, "Fee too low");
+
+    const newXLiquidity = xLiquidity - disclose(xOut + xFee);
+    const newYLiquidity = yLiquidity + order.value as Uint<128>;
+
+    const initialK = calcK(xLiquidity, yLiquidity);
+    const finalK = calcK(newXLiquidity, newYLiquidity);
+
+    assert(finalK >= initialK, "Final k smaller than initial k");
+
+    xRewards = xRewards + disclose(xFee) as Uint<128>;
+    xLiquidity = newXLiquidity;
+    yLiquidity = newYLiquidity;
+
+    pendingOrder = some<Order>(Order{
+        7,
+        disclose(xOut),
+        0,
+        order.recipient
+    });
+}
+
+export circuit mergeXLiquidity(): [] {
+    const contractAddress = getShieldedContractAddress();
+    const xCoin1: QualifiedShieldedCoinInfo = coins.lookup(0);
+    const xCoin2: QualifiedShieldedCoinInfo = coins.lookup(1);
+
+    const mergedXCoin = mergeCoin(xCoin1, xCoin2);
+    receiveShielded(mergedXCoin);
+    coins.insertCoin(0, mergedXCoin, contractAddress);
+    coins.remove(1);
+}
+
+export circuit mergeYLiquidity(): [] {
+    const contractAddress = getShieldedContractAddress();
+    const yCoin1: QualifiedShieldedCoinInfo = coins.lookup(2);
+    const yCoin2: QualifiedShieldedCoinInfo = coins.lookup(3);
+
+    const mergedYCoin = mergeCoin(yCoin1, yCoin2);
+    receiveShielded(mergedYCoin);
+    coins.insertCoin(2, mergedYCoin, contractAddress);
+    coins.remove(3);
+}
+
+export circuit rewardTreasury(): [] {
+    const xCoin: QualifiedShieldedCoinInfo = coins.lookup(0);
+
+    const sendXResult = sendShielded(xCoin, treasury, xRewards);
+
+    assert(sendXResult.change.is_some, "Expected some change");
+
+    const contractAddress = getShieldedContractAddress();
+
+    coins.insertCoin(0, sendXResult.change.value, contractAddress);
+
+    xRewards = 0;
+}
+
+circuit getLPTokenName(): Bytes<32> {
+    return pad(32, "Pulse LP Token");
+}
+
+// validation tokens are dummy tokens
+circuit getValidationTokenName(): Bytes<32> {
+    return pad(32, "Validation Token");
+}
+
+circuit getLPTokenColor(): Bytes<32> {
+    return tokenType(getLPTokenName(), kernel.self());
+}
+
+circuit getShieldedContractAddress(): Either<ZswapCoinPublicKey, ContractAddress> {
+    return right<ZswapCoinPublicKey, ContractAddress>(kernel.self());
+}
+
+circuit getUnshieldedContractAddress(): Either<ContractAddress, UserAddress> {
+    return left<ContractAddress, UserAddress>(kernel.self());
+}
+
+circuit calcK(x: Uint<128>, y: Uint<128>): Uint<248> {
+    return ((x as Uint<124>) * (y as Uint<124>)) as Uint<248>;
+}

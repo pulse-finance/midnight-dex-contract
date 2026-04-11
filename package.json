@@ -8,7 +8,7 @@
   },
   "scripts": {
     "build": "pnpm run build:faucet && pnpm run build:amm",
-    "build:amm": "compact compile ./src/Shielded2StepAMM.compact ./dist/amm",
+    "build:amm": "compact compile ./src/ShieldedBatcherAMM.compact ./dist/amm",
     "build:faucet-amm": "compact compile ./src/FaucetAMM.compact ./dist/faucet-amm",
     "build:faucet": "compact compile ./src/Faucet.compact ./dist/faucet",
     "test": "bun test"
