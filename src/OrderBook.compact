@@ -1,0 +1,116 @@
+pragma language_version >= 0.22;
+
+import CompactStandardLibrary;
+
+export struct AMMCall {
+    ammContract: ContractAddress,
+    circuitName: Bytes<32>,
+    arg0: Uint<64>,
+    arg1: Uint<64>,
+    arg2: Uint<64>,
+    nonce: Bytes<32>
+}
+
+export struct Order {
+    owner: ZswapCoinPublicKey,
+    recipient: Either<ZswapCoinPublicKey, ContractAddress>,
+    ammCall: AMMCall
+}
+
+// This contract stores a single order plus the single shielded coin deposited for it.
+export ledger order: Maybe<Order>;
+
+// Coin position 0 always stores the deposited order coin when the slot is occupied.
+export ledger coins: Map<Uint<8>, QualifiedShieldedCoinInfo>;
+
+constructor() {
+    order = none<Order>();
+}
+
+export circuit placeOrder(
+    owner: ZswapCoinPublicKey,
+    recipient: Either<ZswapCoinPublicKey, ContractAddress>,
+    ammContract: ContractAddress,
+    circuitName: Bytes<32>,
+    arg0: Uint<64>,
+    arg1: Uint<64>,
+    arg2: Uint<64>,
+    nonce: Bytes<32>,
+    coinColor: Bytes<32>,
+    coinValue: Uint<64>,
+    coinNonce: Bytes<32>
+): [] {
+    assert(!order.is_some, "Order slot occupied");
+
+    const coin = ShieldedCoinInfo{
+        disclose(coinNonce),
+        disclose(coinColor),
+        disclose(coinValue)
+    };
+
+    receiveShielded(coin);
+    coins.insertCoin(0, coin, getShieldedContractAddress());
+
+    order = some<Order>(Order{
+        disclose(owner),
+        disclose(recipient),
+        AMMCall{
+            disclose(ammContract),
+            disclose(circuitName),
+            disclose(arg0),
+            disclose(arg1),
+            disclose(arg2),
+            disclose(nonce)
+        }
+    });
+}
+
+// Compact cannot invoke another contract directly here, so fulfillment forwards the
+// stored input coin to the recorded AMM contract. The recorded call metadata lets an
+// off-chain coordinator pair this with the AMM call in the same transaction flow.
+export circuit fulfill(): [] {
+    assert(order.is_some, "No order placed");
+
+    const placedOrder = order.value;
+
+    const orderCoin: QualifiedShieldedCoinInfo = coins.lookup(0);
+    
+    const sendResult = sendShielded(
+        orderCoin,
+        right<ZswapCoinPublicKey, ContractAddress>(placedOrder.ammCall.ammContract),
+        orderCoin.value
+    );
+
+    assert(!sendResult.change.is_some, "Unexpected change while fulfilling order");
+
+    coins.remove(0);
+    order = none<Order>();
+}
+
+/**
+ * The owner can request to send anywhere
+ */
+export circuit cancel(recipient: Either<ZswapCoinPublicKey, ContractAddress>): [] {
+    assert(order.is_some, "No order placed");
+
+    const placedOrder = order.value;
+
+    assert(ownPublicKey() == placedOrder.owner, "Only the order owner can cancel");
+
+    const orderCoin: QualifiedShieldedCoinInfo = coins.lookup(0);
+
+    const sendResult = sendShielded(
+        orderCoin,
+        recipient,
+        orderCoin.value
+    );
+
+    assert(!sendResult.change.is_some, "Unexpected change while cancelling order");
+
+    coins.remove(0);
+    order = none<Order>();
+}
+
+circuit getShieldedContractAddress(): Either<ZswapCoinPublicKey, ContractAddress> {
+    return right<ZswapCoinPublicKey, ContractAddress>(kernel.self());
+}

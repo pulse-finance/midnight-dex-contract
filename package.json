@@ -2,15 +2,18 @@
   "name": "@pulsefinance/dex-contract",
   "version": "0.3.6",
   "description": "Compact contracts for Pulse's Midnight DEX",
+  "type": "module",
   "exports": {
     "./amm": "./dist/amm/contract/index.js",
-    "./faucet": "./dist/faucet/contract/index.js"
+    "./faucet": "./dist/faucet/contract/index.js",
+    "./orderbook": "./dist/orderbook/contract/index.js"
   },
   "scripts": {
-    "build": "pnpm run build:faucet && pnpm run build:amm",
+    "build": "pnpm run build:faucet && pnpm run build:amm && pnpm run build:orderbook",
     "build:amm": "compact compile ./src/ShieldedBatcherAMM.compact ./dist/amm",
     "build:faucet-amm": "compact compile ./src/FaucetAMM.compact ./dist/faucet-amm",
     "build:faucet": "compact compile ./src/Faucet.compact ./dist/faucet",
+    "build:orderbook": "compact compile ./src/OrderBook.compact ./dist/orderbook",
     "test": "bun test"
   },
   "keywords": [],
