@@ -3,17 +3,22 @@
   "version": "0.3.6",
   "description": "Compact contracts for Pulse's Midnight DEX",
   "type": "module",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "exports": {
     "./amm": "./dist/amm/contract/index.js",
     "./faucet": "./dist/faucet/contract/index.js",
     "./orderbook": "./dist/orderbook/contract/index.js"
   },
   "scripts": {
-    "build": "pnpm run build:faucet && pnpm run build:amm && pnpm run build:orderbook",
-    "build:amm": "compact compile ./src/ShieldedBatcherAMM.compact ./dist/amm",
-    "build:faucet-amm": "compact compile ./src/FaucetAMM.compact ./dist/faucet-amm",
-    "build:faucet": "compact compile ./src/Faucet.compact ./dist/faucet",
-    "build:orderbook": "compact compile ./src/OneCoinOrderBook.compact ./dist/orderbook",
+    "prepare": "node ./scripts/build.mjs",
+    "build": "node ./scripts/build.mjs",
+    "build:amm": "node ./scripts/build.mjs amm",
+    "build:faucet": "node ./scripts/build.mjs faucet",
+    "build:orderbook": "node ./scripts/build.mjs orderbook",
     "test": "bun test"
   },
   "keywords": [],

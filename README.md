@@ -4,15 +4,42 @@ Midnight AMM DEX contract, written in Compact.
 
 This AMM contract doesn't require a batcher, and the main goal is to protect the treasury and liquidity providers. From the user's point-of-view, each swap is atomic.
 
-## Compilation steps
- 
-1. install the compact toolchain (see https://docs.midnight.network/getting-started/installation#4-install-compact-using-the-installer-script)
-2. `pnpm build`
+## Install
+
+`pnpm install` is enough.
+
+This package uses the `prepare` lifecycle hook to:
+
+1. download the official Compact compiler for the current OS/CPU architecture
+2. install it into a user cache directory without modifying your shell profile
+3. compile the contracts into `dist`
+
+The first install is slower because it downloads Compact and generates the contract artifacts. Current upstream install docs for Compact are here: https://docs.midnight.network/getting-started/installation
 
 ## Testing steps
 
-First make sure the compact compiler is installed. The contract unit tests can be run with the following commands:
+The contract unit tests can be run with the following commands:
 
 1. `pnpm install`
 2. `pnpm build`
 3. `pnpm test`
+
+## Use From GitHub
+
+Install this package directly from GitHub instead of publishing large artifacts to npm:
+
+```bash
+pnpm add github:pulse-finance/midnight-dex-contract#<tag-or-commit>
+```
+
+When a consuming TypeScript project runs `pnpm install`, `pnpm` will execute this package's `prepare` hook, compile the contracts, and install the built library into `node_modules`.
+
+You can then import the generated contracts through the package subpaths:
+
+```ts
+import * as AmmContract from "@pulsefinance/dex-contract/amm";
+import * as FaucetContract from "@pulsefinance/dex-contract/faucet";
+import * as OrderBookContract from "@pulsefinance/dex-contract/orderbook";
+```
+
+Pinning to a tag or commit is recommended so consumers get a reproducible Compact/compiler output.
