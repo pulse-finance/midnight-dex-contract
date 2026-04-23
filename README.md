@@ -10,8 +10,8 @@ This AMM contract doesn't require a batcher, and the main goal is to protect the
 
 This package uses the `prepare` lifecycle hook to:
 
-1. download the official Compact compiler for the current OS/CPU architecture
-2. install it into a user cache directory without modifying your shell profile
+1. download the official Compact tool for the current OS/CPU architecture
+2. bootstrap an isolated Compact artifact directory and pin the compiler version used by this repo
 3. compile the contracts into `dist`
 
 The first install is slower because it downloads Compact and generates the contract artifacts. Current upstream install docs for Compact are here: https://docs.midnight.network/getting-started/installation

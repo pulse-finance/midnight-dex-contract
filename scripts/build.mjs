@@ -2,7 +2,11 @@ import { rm } from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { ensureCompactBinary } from "./compact-install.mjs";
+import {
+  COMPACT_COMPILER_VERSION,
+  compactArtifactsDirectory,
+  ensureCompactBinary,
+} from "./compact-install.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..");
@@ -29,6 +33,10 @@ function runCompact(binaryPath, args) {
     const child = spawn(binaryPath, args, {
       cwd: repoRoot,
       stdio: "inherit",
+      env: {
+        ...process.env,
+        COMPACT_DIRECTORY: compactArtifactsDirectory(),
+      },
     });
 
     child.on("exit", (code) => {
@@ -55,7 +63,7 @@ async function buildTarget(name, compactBinary) {
 
   await rm(outputPath, { recursive: true, force: true });
   console.error(`[dex-contract] Compiling ${name}`);
-  await runCompact(compactBinary, ["compile", sourcePath, outputPath]);
+  await runCompact(compactBinary, ["compile", `+${COMPACT_COMPILER_VERSION}`, sourcePath, outputPath]);
 }
 
 const selectedTargets = process.argv.slice(2);
