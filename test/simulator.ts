@@ -1,296 +1,418 @@
-import { CircuitContext, constructorContext, emptyZswapLocalState, EncodedCoinInfo, EncodedQualifiedCoinInfo, QueryContext, sampleContractAddress } from "@midnight-ntwrk/compact-runtime"
-import { Contract } from "../dist/contract/index.cjs"
-import { type Address } from "./addresses"
+import {
+    createCircuitContext,
+    createConstructorContext,
+    emptyZswapLocalState,
+    encodeContractAddress,
+} from "@midnight-ntwrk/compact-runtime";
+import { Contract, ledger } from "../dist/amm/contract/index.js";
+import { type Address } from "./addresses";
 
-const dummyTxSender = "0".repeat(64)
+type CoinInfo = {
+    nonce: Uint8Array;
+    color: Uint8Array;
+    value: bigint;
+    mt_index: bigint;
+};
+
+type Sender = { bytes: Uint8Array };
+
+const contractAddress = "33".repeat(32);
+const defaultSender: Sender = { bytes: new Uint8Array(32).fill(2) };
+const defaultRecipient: Address = {
+    is_left: true,
+    left: defaultSender,
+    right: { bytes: new Uint8Array(32) },
+};
 
 export class Simulator {
-    private contract: Contract<unknown, {}>;
+    private contract: Contract;
+    private currentContractState: any;
+    private currentPrivateState: any;
+    private nextNonceId = 1;
     readonly address: string;
-    private circuitContext: CircuitContext<unknown>
-    lpReserves: EncodedQualifiedCoinInfo
-    xReserves: EncodedQualifiedCoinInfo
-    yReserves: EncodedQualifiedCoinInfo
+    private readonly contractRecipient = {
+        is_left: false,
+        left: { bytes: new Uint8Array(32) },
+        right: { bytes: encodeContractAddress(contractAddress) },
+    };
+    lpReserves: CoinInfo;
+    xReserves: CoinInfo;
+    yReserves: CoinInfo;
 
     constructor(treasury: Address) {
-        const fee = 10n
-        const xColor = new Uint8Array(32).fill(9)
-        const yColor = new Uint8Array(32).fill(10)
-        const nonce0 = new Uint8Array(32)
+        const fee = 10n;
+        const xColor = new Uint8Array(32).fill(9);
+        const yColor = new Uint8Array(32).fill(10);
 
-        this.contract = new Contract({})
+        this.contract = new Contract({});
 
-        const { currentPrivateState, currentContractState, currentZswapLocalState} = this.contract.initialState(
-            constructorContext({
-                xRewards: 0n,
-                xLiquidity: 0n,
-                yLiquidity: 0n,
-            }, dummyTxSender),
+        const { currentContractState, currentPrivateState } = this.contract.initialState(
+            createConstructorContext({}, defaultSender),
             fee,
             treasury,
             xColor,
             yColor,
-            nonce0
-        )
+        );
 
-        this.address = sampleContractAddress()
-
-        this.circuitContext = {
-            currentPrivateState,
-            currentZswapLocalState,
-            originalState: currentContractState,
-            transactionContext: new QueryContext(
-                currentContractState.data,
-                this.address
-            )
-        }
+        this.currentContractState = currentContractState;
+        this.currentPrivateState = currentPrivateState;
+        this.address = contractAddress;
 
         this.lpReserves = {
             nonce: new Uint8Array(32),
-            color: this.contract.circuits.getLPTokenColor(this.circuitContext).result, // TODO: how to determine LP token color?
+            color: new Uint8Array(32),
             value: 0n,
-            mt_index: 0n
-        }
+            mt_index: 0n,
+        };
 
         this.xReserves = {
             nonce: new Uint8Array(32),
             color: xColor,
             value: 0n,
-            mt_index: 0n
-        }
+            mt_index: 0n,
+        };
 
         this.yReserves = {
             nonce: new Uint8Array(32),
             color: yColor,
             value: 0n,
-            mt_index: 0n
-        }
+            mt_index: 0n,
+        };
     }
 
     getFeeBps(): bigint {
-        const { result } = this.contract.circuits.getFeeBps(this.circuitContext)
-
-        return result
+        return this.currentLedger().feeBps;
     }
 
     getLPCirculatingSupply(): bigint {
-        const { result } = this.contract.circuits.getLPCirculatingSupply(this.circuitContext)
-
-        return result
+        return this.currentLedger().lpCirculatingSupply;
     }
 
     getXColor(): Uint8Array {
-        const { result } = this.contract.circuits.getXColor(this.circuitContext)
-
-        return result
+        return this.currentLedger().xColor;
     }
 
     getXLiquidity(): bigint {
-        const { result } = this.contract.circuits.getXLiquidity(this.circuitContext)
+        const { result } = this.contract.circuits.getXLiquidity(this.makeContext());
 
-        return result
+        return result;
     }
 
     getXRewards(): bigint {
-        const { result } = this.contract.circuits.getXRewards(this.circuitContext)
-
-        return result
+        return this.currentLedger().xRewards;
     }
 
     getYColor(): Uint8Array {
-        const { result } = this.contract.circuits.getYColor(this.circuitContext)
-
-        return result
+        return this.currentLedger().yColor;
     }
 
     getYLiquidity(): bigint {
-        const { result } = this.contract.circuits.getYLiquidity(this.circuitContext)
+        const { result } = this.contract.circuits.getYLiquidity(this.makeContext());
 
-        return result
+        return result;
     }
 
-    initLiquidity({xIn, yIn, lpOut}: {xIn: bigint, yIn: bigint, lpOut?: bigint}) {
-        const userDefinedLPOut = !!lpOut
+    initLiquidity({ xIn, yIn, lpOut }: { xIn: bigint; yIn: bigint; lpOut?: bigint }) {
+        this.runAtomically(() => {
+            const userDefinedLPOut = lpOut !== undefined;
 
-        lpOut = lpOut ?? BigInt(Math.round(Math.sqrt(Number(xIn)*Number(yIn))))
+            lpOut = lpOut ?? BigInt(Math.round(Math.sqrt(Number(xIn) * Number(yIn))));
 
-        if (!userDefinedLPOut) {
-            while(lpOut*lpOut > xIn*yIn) {
-                lpOut -= 1n
+            if (!userDefinedLPOut) {
+                while (lpOut * lpOut > xIn * yIn) {
+                    lpOut -= 1n;
+                }
             }
-        }
 
-        const { context } = this.contract.circuits.initLiquidity(
-            this.circuitContext, 
-            this.lpReserves,
-            xIn, 
-            yIn, 
-            lpOut
-        )
+            const nonce = this.makeNonce();
+            const { context } = this.contract.circuits.initLiquidity(
+                this.makeContext([
+                    this.makeIncomingOutput(this.xReserves.color, xIn, nonce),
+                    this.makeIncomingOutput(this.yReserves.color, yIn, nonce),
+                ]),
+                xIn,
+                yIn,
+                lpOut,
+                defaultRecipient,
+                nonce,
+            );
 
-        this.syncCircuitContext(context)
+            this.commit(context);
+        });
     }
 
-    addLiquidity({xIn, yIn, lpOut}: {xIn: bigint, yIn: bigint, lpOut?: bigint}) {
-        lpOut = lpOut ?? BigInt(Math.round(Math.sqrt(Number(xIn)*Number(yIn))))
+    addLiquidity({ xIn, yIn, lpOut }: { xIn: bigint; yIn: bigint; lpOut?: bigint }) {
+        this.runAtomically(() => {
+            lpOut = lpOut ?? BigInt(Math.round(Math.sqrt(Number(xIn) * Number(yIn))));
 
-        const { context } = this.contract.circuits.addLiquidity(
-            this.circuitContext,
-            this.xReserves,
-            this.yReserves,
-            this.lpReserves,
-            xIn,
-            yIn, 
-            lpOut
-        )
+            const nonce = this.makeNonce();
 
-        this.syncCircuitContext(context)
+            let result = this.contract.circuits.addLiquidity(
+                this.makeContext([
+                    this.makeIncomingOutput(this.xReserves.color, xIn, nonce),
+                    this.makeIncomingOutput(this.yReserves.color, yIn, nonce),
+                ]),
+                xIn,
+                yIn,
+                defaultRecipient,
+                nonce,
+            );
+            this.commit(result.context);
+
+            result = this.contract.circuits.validateAddLiquidity(this.makeContext(), lpOut, this.makeNonce());
+            this.commit(result.context);
+
+            result = this.contract.circuits.completeAddLiquidity(this.makeContext(), this.makeNonce());
+            this.commit(result.context);
+
+            if (this.currentLedger().coins.member(1n)) {
+                result = this.contract.circuits.mergeXLiquidity(this.makeContext());
+                this.commit(result.context);
+            }
+
+            if (this.currentLedger().coins.member(3n)) {
+                result = this.contract.circuits.mergeYLiquidity(this.makeContext());
+                this.commit(result.context);
+            }
+        });
     }
 
-    removeLiquidity({lpIn, xOut, yOut}: {lpIn: bigint, xOut: bigint, yOut: bigint}) {
-        const { context } = this.contract.circuits.removeLiquidity(
-            this.circuitContext,
-            this.xReserves,
-            this.yReserves,
-            this.lpReserves,
-            lpIn,
-            xOut,
-            yOut
-        )
+    removeLiquidity({ lpIn, xOut, yOut }: { lpIn: bigint; xOut: bigint; yOut: bigint }) {
+        this.runAtomically(() => {
+            const nonce = this.makeNonce();
 
-        this.syncCircuitContext(context)
+            let result = this.contract.circuits.removeLiquidity(
+                this.makeContext([this.makeIncomingOutput(this.lpReserves.color, lpIn, nonce)]),
+                lpIn,
+                defaultRecipient,
+                nonce,
+            );
+            this.commit(result.context);
+
+            result = this.contract.circuits.validateRemoveLiquidity(this.makeContext(), xOut, yOut);
+            this.commit(result.context);
+
+            result = this.contract.circuits.completeRemoveXLiquidity(this.makeContext());
+            this.commit(result.context);
+
+            if (this.currentLedger().pendingOrder.is_some) {
+                result = this.contract.circuits.completeRemoveYLiquidity(this.makeContext());
+                this.commit(result.context);
+            }
+        });
     }
 
-    swapXToY({xIn, xFee, yOut}: {xIn: bigint, xFee?: bigint, yOut?: bigint}) {
-        xFee = xFee ?? this.calcSwapXToYFee(xIn)
-        yOut = yOut ?? this.calcSwapXToYOut(xIn, xFee)
-        
-        const { context } = this.contract.circuits.swapXToY(
-            this.circuitContext,
-            this.xReserves,
-            this.yReserves,
-            xIn,
-            xFee,
-            yOut
-        )
+    swapXToY({ xIn, xFee, yOut }: { xIn: bigint; xFee?: bigint; yOut?: bigint }) {
+        this.runAtomically(() => {
+            xFee = xFee ?? this.calcSwapXToYFee(xIn);
+            yOut = yOut ?? this.calcSwapXToYOut(xIn, xFee);
 
-        this.syncCircuitContext(context)
+            const nonce = this.makeNonce();
+
+            let result = this.contract.circuits.swapXToY(
+                this.makeContext([this.makeIncomingOutput(this.xReserves.color, xIn, nonce)]),
+                xIn,
+                defaultRecipient,
+                nonce,
+            );
+            this.commit(result.context);
+
+            result = this.contract.circuits.validateSwapXToY(this.makeContext(), xFee, yOut);
+            this.commit(result.context);
+
+            result = this.contract.circuits.completeRemoveYLiquidity(this.makeContext());
+            this.commit(result.context);
+
+            if (this.currentLedger().coins.member(1n)) {
+                result = this.contract.circuits.mergeXLiquidity(this.makeContext());
+                this.commit(result.context);
+            }
+        });
     }
 
-    swapYToX({yIn, xFee, xOut}: {yIn: bigint, xFee?: bigint, xOut?: bigint}) {
-        xOut = xOut ?? this.calcSwapYToXOut(yIn)
-        xFee = xFee ?? this.calcSwapYToXFee(xOut)
+    swapYToX({ yIn, xFee, xOut }: { yIn: bigint; xFee?: bigint; xOut?: bigint }) {
+        this.runAtomically(() => {
+            xOut = xOut ?? this.calcSwapYToXOut(yIn);
+            xFee = xFee ?? this.calcSwapYToXFee(xOut);
 
-        const { context } = this.contract.circuits.swapYToX(
-            this.circuitContext,
-            this.xReserves,
-            this.yReserves,
-            yIn,
-            xFee,
-            xOut
-        )
+            const nonce = this.makeNonce();
 
-        this.syncCircuitContext(context)
+            let result = this.contract.circuits.swapYToX(
+                this.makeContext([this.makeIncomingOutput(this.yReserves.color, yIn, nonce)]),
+                yIn,
+                defaultRecipient,
+                nonce,
+            );
+            this.commit(result.context);
+
+            result = this.contract.circuits.validateSwapYToX(this.makeContext(), xFee, xOut);
+            this.commit(result.context);
+
+            result = this.contract.circuits.completeRemoveXLiquidity(this.makeContext());
+            this.commit(result.context);
+
+            if (this.currentLedger().coins.member(3n)) {
+                result = this.contract.circuits.mergeYLiquidity(this.makeContext());
+                this.commit(result.context);
+            }
+        });
     }
 
     rewardTreasury() {
-        const { context } = this.contract.circuits.rewardTreasury(
-            this.circuitContext,
-            this.xReserves
-        )
+        const { context } = this.contract.circuits.rewardTreasury(this.makeContext());
 
-        this.syncCircuitContext(context)
+        this.commit(context);
     }
 
     private calcSwapXToYFee(xIn: bigint): bigint {
-        const feeBps = this.getFeeBps()
-        let xFee = BigInt(Math.round(Number(xIn)*Number(feeBps)/10000))
+        const feeBps = this.getFeeBps();
+        let xFee = BigInt(Math.round((Number(xIn) * Number(feeBps)) / 10000));
 
-        while (xFee*10000n < feeBps*xIn) {
-            xFee += 1n
+        while (xFee * 10000n < feeBps * xIn) {
+            xFee += 1n;
         }
 
-        return xFee
+        return xFee;
     }
 
     private calcSwapXToYOut(xIn: bigint, xFee: bigint): bigint {
-        const initialK = this.xReserves.value*this.yReserves.value
+        const initialK = this.xReserves.value * this.yReserves.value;
 
-        let yOut = this.yReserves.value - BigInt(Math.round(Number(initialK)/Number(this.xReserves.value + xIn - xFee)));
+        let yOut = this.yReserves.value - BigInt(Math.round(Number(initialK) / Number(this.xReserves.value + xIn - xFee)));
 
-        while (initialK > (this.yReserves.value - yOut)*(this.xReserves.value + xIn - xFee)) {
-            yOut -= 1n
+        while (initialK > (this.yReserves.value - yOut) * (this.xReserves.value + xIn - xFee)) {
+            yOut -= 1n;
         }
 
-        return yOut
+        return yOut;
     }
 
     private calcSwapYToXFee(xOut: bigint): bigint {
-        const feeBps = this.getFeeBps()
-        let xFee = BigInt(Math.round(Number(xOut)*Number(feeBps)/(10000 - Number(feeBps))))
+        const feeBps = this.getFeeBps();
+        let xFee = BigInt(Math.round((Number(xOut) * Number(feeBps)) / (10000 - Number(feeBps))));
 
-        while (xFee*(10000n - feeBps) < feeBps*xOut) {
-            xFee += 1n
+        while (xFee * (10000n - feeBps) < feeBps * xOut) {
+            xFee += 1n;
         }
 
-        return xFee
+        return xFee;
     }
 
     private calcSwapYToXOut(yIn: bigint): bigint {
-        const initialK = this.xReserves.value*this.yReserves.value
+        const initialK = this.xReserves.value * this.yReserves.value;
 
-        let xOutWithoutFee = this.xReserves.value - BigInt(Math.round(Number(initialK)/Number(this.yReserves.value + yIn)));
+        let xOutWithoutFee = this.xReserves.value - BigInt(Math.round(Number(initialK) / Number(this.yReserves.value + yIn)));
 
-        while (initialK > (this.xReserves.value - xOutWithoutFee)*(this.yReserves.value + yIn)) {
-            xOutWithoutFee -= 1n
+        while (initialK > (this.xReserves.value - xOutWithoutFee) * (this.yReserves.value + yIn)) {
+            xOutWithoutFee -= 1n;
         }
 
-        const xFee = this.calcSwapXToYFee(xOutWithoutFee)
+        const xFee = this.calcSwapXToYFee(xOutWithoutFee);
 
-        return xOutWithoutFee - xFee
+        return xOutWithoutFee - xFee;
     }
 
-    private syncCircuitContext(context: CircuitContext<unknown>) {
-        this.syncLPReserves(context)
-        this.syncXReserves(context)
-        this.syncYReserves(context)
+    private currentLedger() {
+        return ledger(this.currentContractState.data ?? this.currentContractState);
+    }
 
-        // delete the currentZswapLocalstate
-        this.circuitContext = {
-            ...context,
-            currentZswapLocalState: emptyZswapLocalState(dummyTxSender)
+    private makeContext(outputs: Array<{ coinInfo: Omit<CoinInfo, "mt_index">; recipient: Address }> = []) {
+        return createCircuitContext(
+            this.address,
+            {
+                ...emptyZswapLocalState(defaultSender),
+                outputs,
+            },
+            this.currentContractState,
+            this.currentPrivateState,
+        );
+    }
+
+    private makeIncomingOutput(color: Uint8Array, value: bigint, nonce: Uint8Array) {
+        return {
+            coinInfo: {
+                nonce,
+                color,
+                value,
+            },
+            recipient: this.contractRecipient,
+        };
+    }
+
+    private makeNonce() {
+        const nonce = new Uint8Array(32);
+        let value = this.nextNonceId++;
+
+        for (let i = 31; i >= 0 && value > 0; i -= 1) {
+            nonce[i] = value & 0xff;
+            value >>= 8;
+        }
+
+        return nonce;
+    }
+
+    private commit(context: ReturnType<typeof createCircuitContext>) {
+        this.currentContractState = context.currentQueryContext.state;
+        this.currentPrivateState = context.currentPrivateState;
+        this.syncReserves(context.currentZswapLocalState.outputs);
+    }
+
+    private runAtomically(callback: () => void) {
+        const snapshot = {
+            currentContractState: this.currentContractState,
+            currentPrivateState: this.currentPrivateState,
+            nextNonceId: this.nextNonceId,
+            lpReserves: this.lpReserves,
+            xReserves: this.xReserves,
+            yReserves: this.yReserves,
+        };
+
+        try {
+            callback();
+        } catch (error) {
+            this.currentContractState = snapshot.currentContractState;
+            this.currentPrivateState = snapshot.currentPrivateState;
+            this.nextNonceId = snapshot.nextNonceId;
+            this.lpReserves = snapshot.lpReserves;
+            this.xReserves = snapshot.xReserves;
+            this.yReserves = snapshot.yReserves;
+            throw error;
         }
     }
 
-    private syncLPReserves(context: CircuitContext<unknown>) {
-         const newLPReserves = context.currentZswapLocalState.outputs.find(output => {
-            return !output.recipient.is_left && 
-                output.coinInfo.color.every((b, i) => b == this.lpReserves.color.at(i))
-        })
+    private syncReserves(outputs: Array<{ coinInfo: Omit<CoinInfo, "mt_index">; recipient: Address }>) {
+        const currentLedger = this.currentLedger();
 
-        if (newLPReserves) {
-            this.lpReserves = {...this.lpReserves, ...newLPReserves.coinInfo}
+        if (currentLedger.coins.member(0n)) {
+            this.xReserves = currentLedger.coins.lookup(0n);
+        } else {
+            this.xReserves = { ...this.xReserves, value: 0n, mt_index: 0n, nonce: new Uint8Array(32) };
+        }
+
+        if (currentLedger.coins.member(2n)) {
+            this.yReserves = currentLedger.coins.lookup(2n);
+        } else {
+            this.yReserves = { ...this.yReserves, value: 0n, mt_index: 0n, nonce: new Uint8Array(32) };
+        }
+
+        const mintedLP = outputs.find((output) => {
+            return (
+                output.recipient.is_left &&
+                output.recipient.left.bytes.every((byte, index) => byte === defaultRecipient.left.bytes[index]) &&
+                !this.sameBytes(output.coinInfo.color, this.xReserves.color) &&
+                !this.sameBytes(output.coinInfo.color, this.yReserves.color)
+            );
+        });
+
+        if (mintedLP) {
+            this.lpReserves = {
+                ...mintedLP.coinInfo,
+                mt_index: 0n,
+            };
         }
     }
 
-    private syncXReserves(context: CircuitContext<unknown>) {
-        const newXReserves = context.currentZswapLocalState.outputs.find(output => {
-            return !output.recipient.is_left && output.coinInfo.color.every((b, i) => b == this.xReserves.color.at(i))
-        })
-
-        if (newXReserves) {
-            this.xReserves = {...this.xReserves, ...newXReserves.coinInfo}
-        }
-    }
-
-    private syncYReserves(context: CircuitContext<unknown>) {1
-        const newYReserves = context.currentZswapLocalState.outputs.find(output => {
-            return !output.recipient.is_left && output.coinInfo.color.every((b, i) => b == this.yReserves.color.at(i))
-        })
-
-        if (newYReserves) {
-            this.yReserves = {...this.yReserves, ...newYReserves.coinInfo}
-        }
+    private sameBytes(left: Uint8Array, right: Uint8Array) {
+        return left.length === right.length && left.every((byte, index) => byte === right[index]);
     }
 }
-

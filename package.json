@@ -13,7 +13,7 @@
     "build:amm": "compact compile ./src/ShieldedBatcherAMM.compact ./dist/amm",
     "build:faucet-amm": "compact compile ./src/FaucetAMM.compact ./dist/faucet-amm",
     "build:faucet": "compact compile ./src/Faucet.compact ./dist/faucet",
-    "build:orderbook": "compact compile ./src/OrderBook.compact ./dist/orderbook",
+    "build:orderbook": "compact compile ./src/OneCoinOrderBook.compact ./dist/orderbook",
     "test": "bun test"
   },
   "keywords": [],

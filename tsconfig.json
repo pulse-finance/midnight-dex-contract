@@ -12,7 +12,8 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "incremental": true,
+    "types": ["bun"]
   },
-  "include": ["test/**/*.ts"],
+  "include": ["test/*.test.ts"],
   "exclude": ["node_modules"]
 }
