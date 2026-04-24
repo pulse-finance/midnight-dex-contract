@@ -1,8 +1,8 @@
 # midnight-dex-contract
 
-Midnight AMM DEX contract, written in Compact.
+This project is built on the Midnight Network.
 
-This AMM contract doesn't require a batcher, and the main goal is to protect the treasury and liquidity providers. From the user's point-of-view, each swap is atomic.
+Midnight AMM DEX contract, written in Compact.
 
 ## Install
 
