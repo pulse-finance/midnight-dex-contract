@@ -11,14 +11,14 @@
   "exports": {
     "./amm": "./dist/amm/contract/index.js",
     "./faucet": "./dist/faucet/contract/index.js",
-    "./orderbook": "./dist/orderbook/contract/index.js"
+    "./marketorder": "./dist/marketorder/contract/index.js"
   },
   "scripts": {
     "prepare": "node ./scripts/build.mjs",
     "build": "node ./scripts/build.mjs",
     "build:amm": "node ./scripts/build.mjs amm",
     "build:faucet": "node ./scripts/build.mjs faucet",
-    "build:orderbook": "node ./scripts/build.mjs orderbook",
+    "build:marketorder": "node ./scripts/build.mjs marketorder",
     "test": "bun test"
   },
   "keywords": [],

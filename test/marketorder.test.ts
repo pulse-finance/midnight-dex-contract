@@ -6,7 +6,7 @@ import {
     encodeContractAddress,
     emptyZswapLocalState,
 } from "@midnight-ntwrk/compact-runtime";
-import { Contract, ledger } from "../dist/orderbook/contract/index.js";
+import { Contract, ledger } from "../dist/marketorder/contract/index.js";
 import {
     Contract as AMMContract,
     ledger as ammLedger,
@@ -66,7 +66,9 @@ function nextTx(previousContext: any, sender: { bytes: Uint8Array }) {
     };
 }
 
-describe("OrderBook", () => {
+const callOpening = 11n;
+
+describe("MarketOrder", () => {
     it("stores one order and only lets the owner cancel it", () => {
         const contract = new Contract({});
         const { currentContractState, currentPrivateState } = contract.initialState(
@@ -140,7 +142,7 @@ describe("OrderBook", () => {
             coinNonce,
         );
 
-        const fulfilled = contract.circuits.fulfill(nextTx(placed.context, otherUser));
+        const fulfilled = contract.circuits.fulfill(nextTx(placed.context, otherUser), callOpening);
         const fulfilledLedger = ledger(fulfilled.context.currentQueryContext.state);
         expect(fulfilledLedger.order.is_some).toBe(false);
         expect(fulfilledLedger.coins.isEmpty()).toBe(true);
@@ -156,8 +158,8 @@ describe("OrderBook", () => {
     });
 
     it("can combine fulfill with an AMM shielded receive by using the returned nonce", () => {
-        const orderBook = new Contract({});
-        const { currentContractState, currentPrivateState } = orderBook.initialState(
+        const marketOrder = new Contract({});
+        const { currentContractState, currentPrivateState } = marketOrder.initialState(
             createConstructorContext({}, owner),
         );
 
@@ -168,7 +170,7 @@ describe("OrderBook", () => {
             currentPrivateState,
         );
 
-        const placed = orderBook.circuits.placeOrder(
+        const placed = marketOrder.circuits.placeOrder(
             placeContext,
             owner,
             shieldedRecipient,
@@ -180,7 +182,7 @@ describe("OrderBook", () => {
         );
 
         const placedLedger = ledger(placed.context.currentQueryContext.state);
-        const fulfilled = orderBook.circuits.fulfill(nextTx(placed.context, otherUser));
+        const fulfilled = marketOrder.circuits.fulfill(nextTx(placed.context, otherUser), callOpening);
         const forwardedCoin = fulfilled.context.currentZswapLocalState.outputs[0].coinInfo;
 
         const amm = new AMMContract({});

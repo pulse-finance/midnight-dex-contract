@@ -20,13 +20,13 @@ const targets = {
     source: "src/Faucet.compact",
     output: "dist/faucet",
   },
-  orderbook: {
-    source: "src/OneCoinOrderBook.compact",
-    output: "dist/orderbook",
+  marketorder: {
+    source: "src/MarketOrder.compact",
+    output: "dist/marketorder",
   },
 };
 
-const defaultTargets = ["faucet", "amm", "orderbook"];
+const defaultTargets = ["faucet", "amm", "marketorder"];
 
 function runCompact(binaryPath, args) {
   return new Promise((resolve, reject) => {

@@ -39,7 +39,7 @@ You can then import the generated contracts through the package subpaths:
 ```ts
 import * as AmmContract from "@pulsefinance/dex-contract/amm";
 import * as FaucetContract from "@pulsefinance/dex-contract/faucet";
-import * as OrderBookContract from "@pulsefinance/dex-contract/orderbook";
+import * as MarketOrderContract from "@pulsefinance/dex-contract/marketorder";
 ```
 
 Pinning to a tag or commit is recommended so consumers get a reproducible Compact/compiler output.

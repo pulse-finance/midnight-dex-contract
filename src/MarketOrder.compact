@@ -57,7 +57,7 @@ export circuit placeOrder(
 }
 
 // this doesn't actually work for liquidity addition (two coins needed)
-export circuit fulfill(): [] {
+export circuit fulfill(callOpening: Field): [] {
     assert(order.is_some, "No order placed");
 
     const placedOrder = order.value;
@@ -75,11 +75,14 @@ export circuit fulfill(): [] {
     kernel.claimContractCall(
         placedOrder.ammContract.bytes,
         placedOrder.circuitName,
-        transientHash<AMMCallCommitment>(AMMCallCommitment{
-            placedOrder.arg,
-            placedOrder.recipient,
-            sendResult.sent.nonce
-        })
+        transientCommit<AMMCallCommitment>(
+            AMMCallCommitment{
+                placedOrder.arg,
+                placedOrder.recipient,
+                sendResult.sent.nonce
+            },
+            disclose(callOpening)
+        )
     );
 
     coins.remove(0);
