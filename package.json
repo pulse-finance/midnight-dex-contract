@@ -1,6 +1,6 @@
 {
   "name": "@pulsefinance/dex-contract",
-  "version": "0.3.9",
+  "version": "0.3.10",
   "description": "Compact contracts for Pulse's Midnight DEX",
   "type": "module",
   "files": [
