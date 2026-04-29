@@ -1,114 +1,132 @@
 pragma language_version >= 0.22;
 
 import CompactStandardLibrary;
+import "./Common";
 
-// can be used for swaps and remove liquidity, can't be used for add liquidity (because that requires two coin inputs)
-export struct Order {
-    owner: ZswapCoinPublicKey,
-    recipient: Either<ZswapCoinPublicKey, ContractAddress>,
-    ammContract: ContractAddress,
-    circuitName: Bytes<32>,
-    arg: Uint<64>
-}
-
-struct AMMCallCommitment {
-    arg: Uint<64>,
-    recipient: Either<ZswapCoinPublicKey, ContractAddress>,
-    nonce: Bytes<32>
-}
+witness ownerSecret(): Bytes<32>;
 
 // This contract stores a single order plus the single shielded coin deposited for it.
-export ledger order: Maybe<Order>;
+export ledger slot: Maybe<MarketOrder>;
 
 // Coin position 0 always stores the deposited order coin when the slot is occupied.
 export ledger coins: Map<Uint<8>, QualifiedShieldedCoinInfo>;
 
-constructor() {
-    order = none<Order>();
+ledger receiveCircuitHash: Bytes<32>;
+
+constructor(rch: Bytes<32>) {
+    receiveCircuitHash = disclose(rch);
 }
 
-export circuit placeOrder(
-    owner: ZswapCoinPublicKey,
-    recipient: Either<ZswapCoinPublicKey, ContractAddress>,
-    ammContract: ContractAddress,
-    circuitName: Bytes<32>,
-    inputCoinColor: Bytes<32>,
-    inputCoinValue: Uint<64>,
-    inputCoinNonce: Bytes<32>
+export circuit MarketOrderOpen(
+    ownerCommitment: Bytes<32>,
+    amountSent: Uint<64>,
+    colorSent: Bytes<32>,
+    calls: CircuitId,
+    returnsTo: ZswapCoinPublicKey,
+    colorReturned: Bytes<32>,
+    nonce: Bytes<32>
 ): [] {
-    assert(!order.is_some, "Order slot occupied");
+    assert(!slot.is_some, "MarketOrder slot already occupied");
 
     const coin = ShieldedCoinInfo{
-        disclose(inputCoinNonce),
-        disclose(inputCoinColor),
-        disclose(inputCoinValue)
+        disclose(nonce),
+        disclose(colorSent),
+        disclose(amountSent)
     };
-
+    
     receiveShielded(coin);
-    coins.insertCoin(0, coin, right<ZswapCoinPublicKey, ContractAddress>(kernel.self()));
+    coins.insertCoin(0, coin, thisAddress());
 
-    order = some<Order>(Order{
-        disclose(owner),
-        disclose(recipient),
-        disclose(ammContract),
-        disclose(circuitName),
-        disclose(inputCoinValue)
+    slot = some<MarketOrder>(MarketOrder{
+        disclose(ownerCommitment),
+        disclose(amountSent),
+        disclose(calls),
+        disclose(returnsTo),
+        disclose(colorReturned)
     });
 }
 
-// this doesn't actually work for liquidity addition (two coins needed)
-export circuit fulfill(callOpening: Field): [] {
-    assert(order.is_some, "No order placed");
+export circuit MarketOrderSendToAmm(calleeRnd: Field): [] {
+    assert(slot.is_some, "MarketOrder slot is empty");
 
-    const placedOrder = order.value;
+    const order = slot.value;
 
-    const orderCoin: QualifiedShieldedCoinInfo = coins.lookup(0);
+    const coin: QualifiedShieldedCoinInfo = coins.lookup(0);
     
     const sendResult = sendShielded(
-        orderCoin,
-        right<ZswapCoinPublicKey, ContractAddress>(placedOrder.ammContract),
-        orderCoin.value
+        coin,
+        right<ZswapCoinPublicKey, ContractAddress>(order.calls.address),
+        coin.value
     );
 
     assert(!sendResult.change.is_some, "Unexpected change while fulfilling order");
 
     kernel.claimContractCall(
-        placedOrder.ammContract.bytes,
-        placedOrder.circuitName,
-        transientCommit<AMMCallCommitment>(
-            AMMCallCommitment{
-                placedOrder.arg,
-                placedOrder.recipient,
-                sendResult.sent.nonce
+        order.calls.address.bytes,
+        order.calls.hash,
+        transientCommit<AmmCallArgs>(
+            AmmCallArgs{
+                order.amountSent,
+                sendResult.sent.nonce,
+                CircuitId{
+                    kernel.self(),
+                    receiveCircuitHash
+                }
             },
-            disclose(callOpening)
+            disclose(calleeRnd)
         )
     );
 
     coins.remove(0);
-    order = none<Order>();
+}
+
+export circuit MarketOrderReceiveFromAmm(amountReturned: Uint<64>, nonce: Bytes<32>): [] {
+    assert(slot.is_some, "MarketOrder slot is empty");
+    
+    const order = slot.value;
+
+    const coin = ShieldedCoinInfo{
+        disclose(nonce),
+        disclose(order.colorReturned),
+        disclose(amountReturned)
+    };
+
+    receiveShielded(coin);
+
+    assert(!coins.member(0), "Coin position 0 already occupied");
+
+    coins.insertCoin(0, coin, thisAddress());
 }
 
 /**
- * The owner can request to send anywhere
+ * Used both to cancel and to liquidate after completion
  */
-export circuit cancel(recipient: Either<ZswapCoinPublicKey, ContractAddress>): [] {
-    assert(order.is_some, "No order placed");
+export circuit MarketOrderClose(): [] {
+    assert(slot.is_some, "MarketOrder slot is empty");
 
-    const placedOrder = order.value;
+    const order = slot.value;
 
-    assert(ownPublicKey() == placedOrder.owner, "Only the order owner can cancel");
+    assertOnlyOwner(order);
 
-    const orderCoin: QualifiedShieldedCoinInfo = coins.lookup(0);
+    const coin: QualifiedShieldedCoinInfo = coins.lookup(0);
 
     const sendResult = sendShielded(
-        orderCoin,
-        disclose(recipient),
-        orderCoin.value
+        coin,
+        left<ZswapCoinPublicKey, ContractAddress>(order.returnsTo),
+        coin.value
     );
 
-    assert(!sendResult.change.is_some, "Unexpected change while cancelling order");
+    assert(!sendResult.change.is_some, "Unexpected change while liquidating order");
 
     coins.remove(0);
-    order = none<Order>();
+    slot = none<MarketOrder>();
+}
+
+circuit assertOnlyOwner(order: MarketOrder): [] {
+    const contractAddress = kernel.self().bytes;
+    const secret = ownerSecret();
+
+    const hash = persistentHash<Vector<2, Bytes<32>>>([contractAddress, secret]);
+
+    assert(order.ownerCommitment == hash, "Can only be performed by the order owner");
 }

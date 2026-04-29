@@ -5,7 +5,7 @@ import CompactStandardLibrary;
 // We can't mint inside the constructor because the contract address isn't yet available
 constructor() {}
 
-export circuit mintShielded(tokenName: Bytes<32>, quantity: Uint<64>, nonce: Bytes<32>, receiver: Either<ZswapCoinPublicKey, ContractAddress>): [] {
+export circuit FaucetMintShielded(tokenName: Bytes<32>, quantity: Uint<64>, nonce: Bytes<32>, receiver: Either<ZswapCoinPublicKey, ContractAddress>): [] {
     mintShieldedToken(
         disclose(tokenName),
         disclose(quantity),
@@ -14,7 +14,7 @@ export circuit mintShielded(tokenName: Bytes<32>, quantity: Uint<64>, nonce: Byt
     );
 }
 
-export circuit mintUnshielded(tokenName: Bytes<32>, quantity: Uint<64>, receiver: Either<ContractAddress, UserAddress>): [] {
+export circuit FaucetMintUnshielded(tokenName: Bytes<32>, quantity: Uint<64>, receiver: Either<ContractAddress, UserAddress>): [] {
     mintUnshieldedToken(
         disclose(tokenName),
         disclose(quantity),

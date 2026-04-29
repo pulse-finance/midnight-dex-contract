@@ -1,0 +1,944 @@
+pragma language_version >= 0.22;
+
+import CompactStandardLibrary;
+import "./Common";
+
+// Swap fee in basis points (e.g. 10 = 0.1%)
+export ledger feeBps: Uint<16>;
+
+// Where the accumulated fees are sent
+export ledger treasury: Either<ZswapCoinPublicKey, ContractAddress>;
+
+// only the batcher is allowed to execute these circuits
+// the batcher can also change the feeBps and the treasury address
+export ledger batcherCommitment: Bytes<32>;
+witness batcherSecret(): Bytes<32>;
+
+export ledger xColor: Bytes<32>;
+export ledger xLiquidity: Uint<128>;
+export ledger xRewards: Uint<128>; // The fee is only charged on the X side
+
+export ledger yColor: Bytes<32>;
+export ledger yLiquidity: Uint<128>;
+
+export ledger lpCirculatingSupply: Uint<128>;
+
+/**
+ * In the initial phase of Midnight mainnet, the state space of each contract is limited,
+ *  so we only allow a single order instead of a collection of many orders.
+ */
+export ledger slot: Maybe<AmmOrder>;
+
+/**
+ * 0: first x liquidity coin (always present)
+ * 1: second x liquidity coin (optional)
+ * 2: first y liquidity coin (always present)
+ * 3: second y liquidity coin (optional)
+ */
+export ledger coins: Map<Uint<8>, QualifiedShieldedCoinInfo>;
+
+/**
+ * The contract constructor only initializes the ledger contract state,
+ *  but doesn't yet initialize the liquidity because the contract address isn't available yet.
+ */
+constructor(
+    f: Uint<16>,
+    t: Either<ZswapCoinPublicKey, ContractAddress>,
+    xc: Bytes<32>, 
+    yc: Bytes<32>
+) {
+    // Fee must be less than 100% (10000 basis points)
+    assert(f < 10000, "Fee too high");
+
+    feeBps = disclose(f);
+    treasury = disclose(t);
+    xColor = disclose(xc);
+    yColor = disclose(yc);
+}
+
+// useful for using AMM prices as Oracle feeds directly in other contracts
+export circuit AmmXLiq(): Uint<128> {
+    return xLiquidity;
+}
+
+// useful for using AMM prices as Oracle feeds directly in other contracts
+export circuit AmmYLiq(): Uint<128> {
+    return yLiquidity;
+}
+
+/**
+ * Receives xIn and yIn, and then mints lpOut sending it to the recipient.
+ * This can technically only be done by batcher, but pools not initialized by us will be ignored anyway
+ */
+export circuit AmmInitXYLiq(
+    xIn: Uint<64>,
+    yIn: Uint<64>,
+    lpOut: Uint<64>,
+    recipient: Either<ZswapCoinPublicKey, ContractAddress>,
+    nonce: Bytes<32>
+): [] {
+    assert(lpCirculatingSupply == 0, "Already initialized");
+    assert(lpOut*lpOut <= xIn*yIn, "Too many LP tokens taken");
+
+    batcherCommitment = disclose(generateBatcherCommitment());
+
+    // mint and send lp tokens to recipient (shielded)
+    lpCirculatingSupply = disclose(lpOut);
+    mintShieldedToken(
+        getLPTokenName(),
+        disclose(lpOut),
+        disclose(nonce),
+        disclose(recipient)
+    );
+
+    const contractAddress = getShieldedContractAddress();
+
+    // send the x liquidity to the contract (shielded)
+    xLiquidity = disclose(xIn);
+    const xCoin = ShieldedCoinInfo{
+        disclose(nonce),
+        xColor,
+        xLiquidity
+    };
+    receiveShielded(xCoin);
+    coins.insertCoin(0, xCoin, contractAddress);
+
+    // send the y liquidity to the contract (shielded)
+    yLiquidity = disclose(yIn);
+    const yCoin = ShieldedCoinInfo{
+        disclose(nonce),
+        yColor,
+        yLiquidity
+    };
+    receiveShielded(yCoin);
+    coins.insertCoin(2, yCoin, contractAddress);
+}
+
+/**
+ * Starts the liquidity provision process using X+Y
+ */
+export circuit AmmDepositXYLiq(
+    xIn: Uint<64>,
+    yIn: Uint<64>,
+    returnsTo: CircuitId,
+    nonce: Bytes<32>
+): [] {
+    assertOnlyBatcher();
+    assert(lpCirculatingSupply > 0, "Not yet initialized");
+    assert(!slot.is_some, "Another order is pending");
+
+    const contractAddress = getShieldedContractAddress();
+
+    const inputXCoin = ShieldedCoinInfo{
+        disclose(nonce),
+        xColor,
+        disclose(xIn)
+    };
+
+    receiveShielded(inputXCoin);
+
+    assert(!coins.member(1), "Coin position 1 already occupied");
+
+    coins.insertCoin(1, inputXCoin, contractAddress);
+
+    const inputYCoin = ShieldedCoinInfo{
+        disclose(nonce),
+        yColor,
+        disclose(yIn)
+    };
+
+    receiveShielded(inputYCoin);
+
+    assert(!coins.member(3), "Coin position 3 already occupied");
+
+    coins.insertCoin(3, inputYCoin, contractAddress);
+
+    slot = some<AmmOrder>(AmmOrder{
+        AmmOrderKind.ValidateDepositXYLiq,
+        disclose(xIn),
+        disclose(yIn),
+        disclose(returnsTo)
+    });
+}
+
+/**
+ * Starts the liquidity provision process using X zap-in
+ */
+export circuit AmmDepositXLiq(
+    xIn: Uint<64>,
+    returnsTo: CircuitId,
+    nonce: Bytes<32>
+): [] {
+    assertOnlyBatcher();
+    assert(lpCirculatingSupply > 0, "Not yet initialized");
+    assert(!slot.is_some, "Another order is pending");
+
+    const inputXCoin = ShieldedCoinInfo{
+        disclose(nonce),
+        xColor,
+        disclose(xIn)
+    };
+
+    receiveShielded(inputXCoin);
+
+    const contractAddress = getShieldedContractAddress();
+
+    assert(!coins.member(1), "Coin position 1 already occupied");
+    coins.insertCoin(1, inputXCoin, contractAddress);
+
+    slot = some<AmmOrder>(AmmOrder{
+        AmmOrderKind.ValidateDepositXLiq,
+        disclose(xIn),
+        0,
+        disclose(returnsTo)
+    });
+}
+
+/**
+ * Starts the liquidity provision process using Y zap-in
+ */
+export circuit AmmDepositYLiq(
+    yIn: Uint<64>,
+    returnsTo: CircuitId,
+    nonce: Bytes<32>
+): [] {
+    assertOnlyBatcher();
+    assert(lpCirculatingSupply > 0, "Not yet initialized");
+    assert(!slot.is_some, "Another order is pending");
+
+    const inputYCoin = ShieldedCoinInfo{
+        disclose(nonce),
+        yColor,
+        disclose(yIn)
+    };
+
+    receiveShielded(inputYCoin);
+
+    assert(!coins.member(3), "Coin position 3 already occupied");
+
+    const contractAddress = getShieldedContractAddress();
+
+    coins.insertCoin(3, inputYCoin, contractAddress);
+
+    slot = some<AmmOrder>(AmmOrder{
+        AmmOrderKind.ValidateDepositYLiq,
+        disclose(yIn),
+        0,
+        disclose(returnsTo)
+    });
+}
+
+/**
+ * Starts the swap process for X->Y
+ */
+export circuit AmmSwapXToY(
+    xIn: Uint<64>,
+    returnsTo: CircuitId,
+    nonce: Bytes<32>
+): [] {
+    assertOnlyBatcher();
+    assert(!slot.is_some, "Another order is pending");
+
+    const coin = ShieldedCoinInfo{
+        disclose(nonce),
+        xColor,
+        disclose(xIn)
+    };
+
+    receiveShielded(coin);
+
+    const contractAddress = getShieldedContractAddress();
+
+    assert(!coins.member(1), "Coin position 1 already occupied");
+    coins.insertCoin(1, coin, contractAddress);
+
+    slot = some<AmmOrder>(AmmOrder{
+        AmmOrderKind.ValidateSwapXToY,
+        disclose(xIn),
+        0,
+        disclose(returnsTo)
+    });
+}
+
+/**
+ * Starts the swap process for Y->X
+ */
+export circuit AmmSwapYToX(
+    yIn: Uint<64>,
+    returnsTo: CircuitId,
+    nonce: Bytes<32>
+): [] {
+    assertOnlyBatcher();
+    assert(!slot.is_some, "Another order is pending");
+
+    const inputYCoin = ShieldedCoinInfo{
+        disclose(nonce),
+        yColor,
+        disclose(yIn)
+    };
+
+    receiveShielded(inputYCoin);
+
+    assert(!coins.member(3), "Coin position 3 already occupied");
+
+    const contractAddress = getShieldedContractAddress();
+
+    coins.insertCoin(3, inputYCoin, contractAddress);
+
+    slot = some<AmmOrder>(AmmOrder{
+        AmmOrderKind.ValidateSwapYToX,
+        disclose(yIn),
+        0,
+        disclose(returnsTo)
+    });
+}
+
+/**
+ * Starts the liquidity withdrawal process to receive X+Y
+ */
+export circuit AmmWithdrawXYLiq(
+    lpIn: Uint<64>,
+    returnsTo: CircuitId,
+    nonce: Bytes<32>
+): [] {
+    assertOnlyBatcher();
+    assert(!slot.is_some, "Amm slot not empty");
+
+    const coin = ShieldedCoinInfo{
+        disclose(nonce),
+        getLPTokenColor(),
+        disclose(lpIn)
+    };
+
+    // receiveShielded acts as burn here, no other circuit allows spending this shielded coin
+    receiveShielded(coin);
+
+    slot = some<AmmOrder>(AmmOrder{
+        AmmOrderKind.ValidateWithdrawXYLiq,
+        disclose(lpIn),
+        0,
+        disclose(returnsTo)
+    });
+}
+
+/**
+ * Starts the liquidity withdrawal process to receive X
+ */
+export circuit AmmWithdrawXLiq(
+    lpIn: Uint<64>,
+    returnsTo: CircuitId,
+    nonce: Bytes<32>
+): [] {
+    assertOnlyBatcher();
+    assert(!slot.is_some, "Amm slot not empty");
+
+    const coin = ShieldedCoinInfo{
+        disclose(nonce),
+        getLPTokenColor(),
+        disclose(lpIn)
+    };
+
+    // receiveShielded acts as burn here, no other circuit allows spending this shielded coin
+    receiveShielded(coin);
+
+    slot = some<AmmOrder>(AmmOrder{
+        AmmOrderKind.ValidateWithdrawXLiq,
+        disclose(lpIn),
+        0,
+        disclose(returnsTo)
+    });
+}
+
+/** 
+ * Starts the liquidity withdrawal process to receive Y
+ */
+export circuit AmmWithdrawYLiq(
+    lpIn: Uint<64>,
+    returnsTo: CircuitId,
+    nonce: Bytes<32>
+): [] {
+    assertOnlyBatcher();
+    assert(!slot.is_some, "Amm slot not empty");
+
+    const inputLPCoin = ShieldedCoinInfo{
+        disclose(nonce),
+        getLPTokenColor(),
+        disclose(lpIn)
+    };
+
+    // receiveShielded acts as burn here, no other circuit allows spending this shielded coin
+    receiveShielded(inputLPCoin);
+
+    slot = some<AmmOrder>(AmmOrder{
+        AmmOrderKind.ValidateWithdrawYLiq,
+        disclose(lpIn),
+        0,
+        disclose(returnsTo)
+    });
+}
+
+export circuit AmmMergeXLiq(): [] {
+    const contractAddress = getShieldedContractAddress();
+    const coin1: QualifiedShieldedCoinInfo = coins.lookup(0);
+    const coin2: QualifiedShieldedCoinInfo = coins.lookup(1);
+
+    const mergedCoin = mergeCoin(coin1, coin2);
+
+    receiveShielded(mergedCoin);
+
+    coins.insertCoin(0, mergedCoin, contractAddress);
+
+    coins.remove(1);
+}
+
+export circuit AmmMergeYLiq(): [] {
+    const contractAddress = getShieldedContractAddress();
+    const coin1: QualifiedShieldedCoinInfo = coins.lookup(2);
+    const coin2: QualifiedShieldedCoinInfo = coins.lookup(3);
+
+    const mergedCoin = mergeCoin(coin1, coin2);
+
+    receiveShielded(mergedCoin);
+
+    coins.insertCoin(2, mergedCoin, contractAddress);
+
+    coins.remove(3);
+}
+
+/**
+ * Ends the liquidity provision process
+ */
+export circuit AmmMintLp(nonce: Bytes<32>, calleeRnd: Field): [] {
+    assert(slot.is_some, "No pending order");
+
+    const order = slot.value;
+
+    assert(order.kind == AmmOrderKind.MintLp, "Pending order isn't a MintLp order");
+
+    const lpOut = order.fstAmount;
+
+    mintShieldedToken(
+        getLPTokenName(),
+        lpOut,
+        disclose(nonce),
+        right<ZswapCoinPublicKey, ContractAddress>(order.returnsTo.address)
+    );
+
+    kernel.claimContractCall(
+        order.returnsTo.address.bytes,
+        order.returnsTo.hash,
+        transientCommit<ReturnCallArgs>(
+            ReturnCallArgs{
+                lpOut,
+                disclose(nonce)
+            },
+            disclose(calleeRnd)
+        )
+    );
+
+    slot = none<AmmOrder>();
+}
+
+/**
+ * Send X rewards to treasury
+ */
+export circuit AmmReward(): [] {
+    assertOnlyBatcher();
+
+    const xCoin: QualifiedShieldedCoinInfo = coins.lookup(0);
+
+    const sendXResult = sendShielded(xCoin, treasury, xRewards);
+
+    assert(sendXResult.change.is_some, "Expected some change");
+
+    coins.insertCoin(0, sendXResult.change.value, thisAddress());
+
+    xRewards = 0;
+}
+
+/**
+ * Ends either a liquidity withdrawal process or a swap process
+ */
+export circuit AmmSendX(calleeRnd: Field): [] {
+    assert(slot.is_some, "No pending order");
+
+    const order = slot.value;
+
+    assert(order.kind == AmmOrderKind.SendX, "Pending order isn't a SendX order");
+    
+    const xCoin: QualifiedShieldedCoinInfo = coins.lookup(0);
+
+    const xOut = order.fstAmount;
+
+    const sendXResult = sendShielded(
+        xCoin, 
+        right<ZswapCoinPublicKey, ContractAddress>(order.returnsTo.address), 
+        xOut
+    );
+
+    assert(sendXResult.change.is_some, "Expected some X change");
+
+    coins.insertCoin(0, sendXResult.change.value, thisAddress());
+    
+    kernel.claimContractCall(
+        order.returnsTo.address.bytes,
+        order.returnsTo.hash,
+        transientCommit<ReturnCallArgs>(
+            ReturnCallArgs{
+                xOut,
+                sendXResult.sent.nonce
+            },
+            disclose(calleeRnd)
+        )
+    );
+
+    const yOut = order.sndAmount;
+
+    if (yOut > 0) {
+        slot = some<AmmOrder>(AmmOrder{
+            AmmOrderKind.SendY,
+            yOut,
+            0,
+            order.returnsTo,
+        });
+    } else {
+        slot = none<AmmOrder>();
+    }
+}
+
+/**
+ * Ends either a liquidity withdrawal process or a swap process
+ */
+export circuit AmmSendY(calleeRnd: Field): [] {
+    assert(slot.is_some, "No pending order");
+
+    const order = slot.value;
+
+    assert(order.kind == AmmOrderKind.SendY, "Pending order isn't an SendY order");
+
+    const yCoin: QualifiedShieldedCoinInfo = coins.lookup(2);
+
+    const yOut = order.fstAmount;
+
+    const sendYResult = sendShielded(
+        yCoin, 
+        right<ZswapCoinPublicKey, ContractAddress>(order.returnsTo.address), 
+        yOut
+    );
+
+    assert(sendYResult.change.is_some, "Expected some Y change");
+
+    coins.insertCoin(2, sendYResult.change.value, thisAddress());
+
+    kernel.claimContractCall(
+        order.returnsTo.address.bytes,
+        order.returnsTo.hash,
+        transientCommit<ReturnCallArgs>(
+            ReturnCallArgs{
+                yOut,
+                sendYResult.sent.nonce
+            },
+            disclose(calleeRnd)
+        )
+    );
+
+    slot = none<AmmOrder>();
+}
+
+/**
+ * Change the swap fee and the treasury address
+ */
+export circuit AmmUpdate(f: Uint<16>, t: Either<ZswapCoinPublicKey, ContractAddress>): [] {
+    assertOnlyBatcher();
+    assert(f < 10000, "Fee too high");
+
+    feeBps = disclose(f);
+    treasury = disclose(t);
+}
+
+
+/**
+ * Validates the ledger state changes of liquidity provision with X+Y
+ */
+export circuit AmmValidateDepositXYLiq(
+    lpOut: Uint<64>,
+    nonce: Bytes<32>
+): [] {
+    assert(slot.is_some, "No pending order");
+
+    const order = slot.value;
+
+    assert(order.kind == AmmOrderKind.ValidateDepositXYLiq, "Pending order isn't a ValidateDepositXYLiq order");
+
+    const xIn = order.fstAmount;
+    const yIn = order.sndAmount;
+
+    if (xIn * yLiquidity < yIn * xLiquidity) {
+        const xLhs = disclose(lpOut) * xLiquidity;
+        const xRhs = xIn * lpCirculatingSupply;
+
+        assert(xLhs <= xRhs, "Too many LP tokens taken (bound by xIn)");
+    } else {
+        const yLhs = disclose(lpOut) * yLiquidity;
+        const yRhs = yIn * lpCirculatingSupply;
+
+        assert(yLhs <= yRhs, "Too many LP tokens taken (bound by yIn)");
+    }
+
+    lpCirculatingSupply = lpCirculatingSupply + disclose(lpOut) as Uint<128>;
+    xLiquidity = xLiquidity + xIn as Uint<128>;
+    yLiquidity = yLiquidity + yIn as Uint<128>;
+
+    slot = some<AmmOrder>(AmmOrder{
+        AmmOrderKind.MintLp,
+        disclose(lpOut),
+        0,
+        order.returnsTo
+    });
+}
+
+/**
+ * Validates the ledger state changes of liquidity provision with X zap-in
+ */
+export circuit AmmValidateDepositXLiq(
+    xSwap: Uint<64>,
+    xFee: Uint<64>,
+    ySwap: Uint<64>,
+    lpOut: Uint<64>
+): [] {
+    assert(slot.is_some, "No pending order");
+
+    const order = slot.value;
+
+    assert(order.kind == AmmOrderKind.ValidateDepositXLiq, "Pending order isn't a ValidateDepositXLiq order");
+
+    const xIn = order.fstAmount;
+
+    assert(xFee * 10000 >= xSwap * feeBps, "Fee too low");
+
+    const xLiquidityAfterSwap = xLiquidity + disclose(xSwap - xFee) as Uint<128>;
+    const yLiquidityAfterSwap = yLiquidity - disclose(ySwap);
+
+    const initialK = calcK(xLiquidity, yLiquidity);
+    const swapK = calcK(xLiquidityAfterSwap, yLiquidityAfterSwap);
+    assert(swapK >= initialK, "Post-swap k is lower than initial k");
+
+    const xLiquidityAddedAfterSwap = disclose(xIn - xSwap);
+    const yLiquidityAddedAfterSwap = disclose(ySwap);
+
+    if (xLiquidityAddedAfterSwap * yLiquidityAfterSwap < yLiquidityAddedAfterSwap * xLiquidityAfterSwap) {
+        const xLhs = disclose(lpOut) * xLiquidityAfterSwap;
+        const xRhs = xLiquidityAddedAfterSwap * lpCirculatingSupply;
+
+        assert(xLhs <= xRhs, "Too many LP tokens taken (bound by x)");
+    } else {
+        const yLhs = disclose(lpOut) * yLiquidityAfterSwap;
+        const yRhs = yLiquidityAddedAfterSwap * lpCirculatingSupply;
+
+        assert(yLhs <= yRhs, "Too many LP tokens taken (bound by y)");
+    }
+
+    lpCirculatingSupply = lpCirculatingSupply + disclose(lpOut) as Uint<128>;
+    xLiquidity = xLiquidity + disclose(xIn - xFee) as Uint<128>;
+    xRewards = xRewards + disclose(xFee) as Uint<128>;
+
+    slot = some<AmmOrder>(AmmOrder{
+        AmmOrderKind.MintLp,
+        disclose(lpOut),
+        0,
+        order.returnsTo
+    });
+}
+
+/**
+ * Validates the ledger state changes of liquidity provision with Y zap-in
+ */
+export circuit AmmValidateDepositYLiq(
+    ySwap: Uint<64>,
+    xFee: Uint<64>,
+    xSwap: Uint<64>,
+    lpOut: Uint<64>
+): [] {
+    assert(slot.is_some, "No pending order");
+
+    const order = slot.value;
+
+    assert(order.kind == AmmOrderKind.ValidateDepositYLiq, "Pending order isn't a ValidateDepositYLiq order");
+
+    const yIn = order.fstAmount;
+
+    assert(xFee * (10000 - feeBps) >= xSwap * feeBps, "Fee too low");
+
+    const xLiquidityAfterSwap = xLiquidity - disclose(xSwap + xFee);
+    const yLiquidityAfterSwap = yLiquidity + disclose(ySwap) as Uint<128>;
+
+    const initialK = calcK(xLiquidity, yLiquidity);
+    const swapK = calcK(xLiquidityAfterSwap, yLiquidityAfterSwap);
+    assert(swapK >= initialK, "Post-swap k is lower than initial k");
+
+    const xLiquidityAddedAfterSwap = disclose(xSwap);
+    const yLiquidityAddedAfterSwap = disclose(yIn - ySwap);
+
+    if (xLiquidityAddedAfterSwap * yLiquidityAfterSwap < yLiquidityAddedAfterSwap * xLiquidityAfterSwap) {
+        const xLhs = disclose(lpOut) * xLiquidityAfterSwap;
+        const xRhs = xLiquidityAddedAfterSwap * lpCirculatingSupply;
+
+        assert(xLhs <= xRhs, "Too many LP tokens taken (bound by x)");
+    } else {
+        const yLhs = disclose(lpOut) * yLiquidityAfterSwap;
+        const yRhs = yLiquidityAddedAfterSwap * lpCirculatingSupply;
+
+        assert(yLhs <= yRhs, "Too many LP tokens taken (bound by y)");
+    }
+
+    lpCirculatingSupply = lpCirculatingSupply + disclose(lpOut) as Uint<128>;
+    xLiquidity = xLiquidity - disclose(xFee);
+    xRewards = xRewards + disclose(xFee) as Uint<128>;
+    yLiquidity = yLiquidity + disclose(yIn) as Uint<128>;
+
+    slot = some<AmmOrder>(AmmOrder{
+        AmmOrderKind.MintLp,
+        disclose(lpOut),
+        0,
+        order.returnsTo
+    });
+}
+
+/**
+ * Validate ledger state change of X->Y swap 
+ */
+export circuit AmmValidateSwapXToY(
+    xFee: Uint<64>,
+    yOut: Uint<64>
+): [] {
+    assert(slot.is_some, "No pending order");
+    
+    const order = slot.value;
+
+    assert(order.kind == AmmOrderKind.ValidateSwapXToY, "Pending order isn't a ValidateSwapXToY order");
+
+    const xIn = order.fstAmount;
+
+    assert(xFee * 10000 >= xIn * feeBps, "Fee too low");
+
+    const newXLiquidity = xLiquidity + disclose(xIn - xFee) as Uint<128>;
+    const newYLiquidity = yLiquidity - disclose(yOut);
+
+    const initialK = calcK(xLiquidity, yLiquidity);
+    const finalK = calcK(newXLiquidity, newYLiquidity);
+    assert(finalK >= initialK, "Final k smaller than initial k");
+
+    xRewards = xRewards + disclose(xFee) as Uint<128>;
+    xLiquidity = newXLiquidity;
+    yLiquidity = newYLiquidity;
+
+    slot = some<AmmOrder>(AmmOrder{
+        AmmOrderKind.SendY,
+        disclose(yOut),
+        0,
+        order.returnsTo
+    });
+}
+
+/**
+ * Validates ledger state change of Y->X swap
+ */
+export circuit AmmValidateSwapYToX(
+    xFee: Uint<64>,
+    xOut: Uint<64>
+): [] {
+    assert(slot.is_some, "No pending order");
+
+    const order = slot.value;
+
+    assert(order.kind == AmmOrderKind.ValidateSwapYToX, "Pending order isn't a ValidateSwapYToX order");
+
+    assert(xFee * (10000 - feeBps) >= xOut * feeBps, "Fee too low");
+
+    const yIn = order.fstAmount;
+
+    const newXLiquidity = xLiquidity - disclose(xOut + xFee);
+    const newYLiquidity = yLiquidity + yIn as Uint<128>;
+
+    const initialK = calcK(xLiquidity, yLiquidity);
+    const finalK = calcK(newXLiquidity, newYLiquidity);
+
+    assert(finalK >= initialK, "Final k smaller than initial k");
+
+    xRewards = xRewards + disclose(xFee) as Uint<128>;
+    xLiquidity = newXLiquidity;
+    yLiquidity = newYLiquidity;
+
+    slot = some<AmmOrder>(AmmOrder{
+        AmmOrderKind.SendX,
+        disclose(xOut),
+        0,
+        order.returnsTo
+    });
+}
+
+/**
+ * Validates the ledger state change of liquidity withdrawal process for X+Y
+ */
+export circuit AmmValidateWithdrawXYLiq(
+    xOut: Uint<64>,
+    yOut: Uint<64>
+): [] {
+    assert(slot.is_some, "No pending order");
+
+    const order = slot.value;
+
+    assert(order.kind == AmmOrderKind.ValidateWithdrawXYLiq, "Pending order isn't a ValidateWithdrawXYLiq order");
+
+    const lpIn = order.fstAmount;
+
+    const xLhs = xOut * lpCirculatingSupply;
+    const xRhs = lpIn * xLiquidity;
+    assert(xLhs <= xRhs, "Too many X tokens taken");
+    
+    const yLhs = yOut * lpCirculatingSupply;
+    const yRhs = lpIn * yLiquidity;
+    assert(yLhs <= yRhs, "Too many Y tokens taken");
+
+    lpCirculatingSupply = lpCirculatingSupply - disclose(lpIn);
+    xLiquidity = xLiquidity - disclose(xOut);
+    yLiquidity = yLiquidity - disclose(yOut);
+
+    slot = some<AmmOrder>(AmmOrder{
+        AmmOrderKind.SendX,
+        disclose(xOut),
+        disclose(yOut),
+        order.returnsTo
+    });
+}
+
+/**
+ * Validates the ledger state change of liquidity withdrawal process for X zap-out
+ */
+export circuit AmmValidateWithdrawXLiq(
+    xOut: Uint<64>,
+    ySwap: Uint<64>,
+    xFee: Uint<64>,
+    xSwap: Uint<64>
+): [] {
+    assert(slot.is_some, "No pending order");
+
+    const order = slot.value;
+
+    assert(order.kind == AmmOrderKind.ValidateWithdrawXLiq, "Pending order isn't a ValidateWithdrawXLiq order");
+
+    const lpIn = order.fstAmount;
+    const xLiquidityRemovedBeforeSwap = disclose(xOut - xSwap);
+    const yLiquidityRemovedBeforeSwap = disclose(ySwap);
+
+    const xRemoveLhs = xLiquidityRemovedBeforeSwap * lpCirculatingSupply;
+    const xRemoveRhs = lpIn * xLiquidity;
+    assert(xRemoveLhs <= xRemoveRhs, "Too many X tokens taken");
+
+    const yRemoveLhs = yLiquidityRemovedBeforeSwap * lpCirculatingSupply;
+    const yRemoveRhs = lpIn * yLiquidity;
+    assert(yRemoveLhs <= yRemoveRhs, "Too many Y tokens taken");
+
+    assert(xFee * (10000 - feeBps) >= xSwap * feeBps, "Fee too low");
+
+    const xLiquidityBeforeSwap = xLiquidity - xLiquidityRemovedBeforeSwap;
+    const yLiquidityBeforeSwap = yLiquidity - yLiquidityRemovedBeforeSwap;
+    const xLiquidityAfterSwap = xLiquidityBeforeSwap - disclose(xSwap + xFee);
+    const yLiquidityAfterSwap = yLiquidityBeforeSwap + disclose(ySwap) as Uint<128>;
+
+    const preSwapK = calcK(xLiquidityBeforeSwap, yLiquidityBeforeSwap);
+    const postSwapK = calcK(xLiquidityAfterSwap, yLiquidityAfterSwap);
+    assert(postSwapK >= preSwapK, "Post-swap k is lower than pre-swap k");
+
+    lpCirculatingSupply = lpCirculatingSupply - disclose(lpIn);
+    xRewards = xRewards + disclose(xFee) as Uint<128>;
+    xLiquidity = xLiquidity - disclose(xOut + xFee);
+
+    slot = some<AmmOrder>(AmmOrder{
+        AmmOrderKind.SendX,
+        disclose(xOut),
+        0,
+        order.returnsTo
+    });
+}
+
+/**
+ * Validates the ledger state change of liquidity withdrawal process for Y zap-out
+ */
+export circuit AmmValidateWithdrawYLiq(
+    yOut: Uint<64>,
+    xSwap: Uint<64>,
+    xFee: Uint<64>,
+    ySwap: Uint<64>
+): [] {
+    assert(slot.is_some, "No pending order");
+
+    const order = slot.value;
+
+    assert(order.kind == AmmOrderKind.ValidateWithdrawYLiq, "Pending order isn't a ValidateWithdrawYLiq order");
+
+    const lpIn = order.fstAmount;
+    const xLiqRemovedBeforeSwap = disclose(xSwap);
+    const yLiqRemovedBeforeSwap = disclose(yOut - ySwap);
+
+    const xRemoveLhs = xLiqRemovedBeforeSwap * lpCirculatingSupply;
+    const xRemoveRhs = lpIn * xLiquidity;
+    assert(xRemoveLhs <= xRemoveRhs, "Too many X tokens taken");
+
+    const yRemoveLhs = yLiqRemovedBeforeSwap * lpCirculatingSupply;
+    const yRemoveRhs = lpIn * yLiquidity;
+    assert(yRemoveLhs <= yRemoveRhs, "Too many Y tokens taken");
+
+    assert(xFee * 10000 >= xSwap * feeBps, "Fee too low");
+
+    const xLiqBeforeSwap = xLiquidity - xLiqRemovedBeforeSwap;
+    const yLiqBeforeSwap = yLiquidity - yLiqRemovedBeforeSwap;
+    const xLiqAfterSwap = xLiqBeforeSwap + disclose(xSwap - xFee) as Uint<128>;
+    const yLiqAfterSwap = yLiqBeforeSwap - disclose(ySwap);
+
+    const preSwapK = calcK(xLiqBeforeSwap, yLiqBeforeSwap);
+    const postSwapK = calcK(xLiqAfterSwap, yLiqAfterSwap);
+    assert(postSwapK >= preSwapK, "Post-swap k is lower than pre-swap k");
+
+    lpCirculatingSupply = lpCirculatingSupply - disclose(lpIn);
+    xLiquidity = xLiquidity - disclose(xFee);
+    xRewards = xRewards + disclose(xFee) as Uint<128>;
+    yLiquidity = yLiquidity - disclose(yOut) as Uint<128>;
+
+    slot = some<AmmOrder>(AmmOrder{
+        AmmOrderKind.SendY,
+        disclose(yOut),
+        0,
+        order.returnsTo
+    });
+}
+
+circuit getLPTokenName(): Bytes<32> {
+    return pad(32, "Pulse LP Token");
+}
+
+circuit getLPTokenColor(): Bytes<32> {
+    return tokenType(getLPTokenName(), kernel.self());
+}
+
+circuit getShieldedContractAddress(): Either<ZswapCoinPublicKey, ContractAddress> {
+    return right<ZswapCoinPublicKey, ContractAddress>(kernel.self());
+}
+
+circuit generateBatcherCommitment(): Bytes<32> {
+    const contractAddress = kernel.self().bytes;
+    const secret = batcherSecret();
+
+    return persistentHash<Vector<2, Bytes<32>>>([contractAddress, secret]);
+}
+
+/**
+ * This circuit succeeds if the batcherSecret() returns the correct value, without revealing it
+ */
+circuit assertOnlyBatcher(): [] {
+    assert(batcherCommitment == generateBatcherCommitment(), "Can only be performed by batcher");
+}
+
+circuit calcK(x: Uint<128>, y: Uint<128>): Uint<248> {
+    return ((x as Uint<124>) * (y as Uint<124>)) as Uint<248>;
+}

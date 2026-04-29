@@ -208,3 +208,77 @@ describe("init liquidity with an Y to X swap", () => {
         expect(simulator.getXRewards()).toBe(0n)
     })
 })
+
+describe("zap liquidity paths", () => {
+    it("can zap X into LP", () => {
+        const simulator = new Simulator(treasury)
+
+        simulator.initLiquidity({xIn: 1_000_000n, yIn: 2_000_000n, lpOut: 1_000_000n})
+        simulator.zapInX({
+            xIn: 1000n,
+            xSwap: 500n,
+            xFee: 1n,
+            ySwap: 900n,
+            lpOut: 450n,
+        })
+
+        expect(simulator.getXLiquidity()).toBe(1_000_999n)
+        expect(simulator.getYLiquidity()).toBe(2_000_000n)
+        expect(simulator.getXRewards()).toBe(1n)
+        expect(simulator.getLPCirculatingSupply()).toBe(1_000_450n)
+    })
+
+    it("can zap Y into LP", () => {
+        const simulator = new Simulator(treasury)
+
+        simulator.initLiquidity({xIn: 1_000_000n, yIn: 2_000_000n, lpOut: 1_000_000n})
+        simulator.zapInY({
+            yIn: 2000n,
+            ySwap: 1000n,
+            xFee: 1n,
+            xSwap: 498n,
+            lpOut: 498n,
+        })
+
+        expect(simulator.getXLiquidity()).toBe(999_999n)
+        expect(simulator.getYLiquidity()).toBe(2_002_000n)
+        expect(simulator.getXRewards()).toBe(1n)
+        expect(simulator.getLPCirculatingSupply()).toBe(1_000_498n)
+    })
+
+    it("can zap LP out to X", () => {
+        const simulator = new Simulator(treasury)
+
+        simulator.initLiquidity({xIn: 1_000_000n, yIn: 1_000_000n, lpOut: 1_000_000n})
+        simulator.zapOutX({
+            lpIn: 1000n,
+            xOut: 1000n,
+            ySwap: 500n,
+            xFee: 1n,
+            xSwap: 498n,
+        })
+
+        expect(simulator.getXLiquidity()).toBe(998_999n)
+        expect(simulator.getYLiquidity()).toBe(1_000_000n)
+        expect(simulator.getXRewards()).toBe(1n)
+        expect(simulator.getLPCirculatingSupply()).toBe(999_000n)
+    })
+
+    it("can zap LP out to Y", () => {
+        const simulator = new Simulator(treasury)
+
+        simulator.initLiquidity({xIn: 1_000_000n, yIn: 1_000_000n, lpOut: 1_000_000n})
+        simulator.zapOutY({
+            lpIn: 1000n,
+            yOut: 1000n,
+            xSwap: 500n,
+            xFee: 1n,
+            ySwap: 498n,
+        })
+
+        expect(simulator.getXLiquidity()).toBe(999_999n)
+        expect(simulator.getYLiquidity()).toBe(999_000n)
+        expect(simulator.getXRewards()).toBe(1n)
+        expect(simulator.getLPCirculatingSupply()).toBe(999_000n)
+    })
+})

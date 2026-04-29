@@ -50,6 +50,7 @@ export class Simulator {
             createConstructorContext({}, defaultSender),
             fee,
             treasury,
+            defaultSender,
             xColor,
             yColor,
         );
@@ -93,7 +94,7 @@ export class Simulator {
     }
 
     getXLiquidity(): bigint {
-        const { result } = this.contract.circuits.getXLiquidity(this.makeContext());
+        const { result } = this.contract.circuits.AMM_getX(this.makeContext());
 
         return result;
     }
@@ -107,7 +108,7 @@ export class Simulator {
     }
 
     getYLiquidity(): bigint {
-        const { result } = this.contract.circuits.getYLiquidity(this.makeContext());
+        const { result } = this.contract.circuits.AMM_getY(this.makeContext());
 
         return result;
     }
@@ -125,7 +126,7 @@ export class Simulator {
             }
 
             const nonce = this.makeNonce();
-            const { context } = this.contract.circuits.initLiquidity(
+            const { context } = this.contract.circuits.AMM_initLiquidity(
                 this.makeContext([
                     this.makeIncomingOutput(this.xReserves.color, xIn, nonce),
                     this.makeIncomingOutput(this.yReserves.color, yIn, nonce),
@@ -147,7 +148,7 @@ export class Simulator {
 
             const nonce = this.makeNonce();
 
-            let result = this.contract.circuits.addLiquidity(
+            let result = this.contract.circuits.AMM_receiveXY(
                 this.makeContext([
                     this.makeIncomingOutput(this.xReserves.color, xIn, nonce),
                     this.makeIncomingOutput(this.yReserves.color, yIn, nonce),
@@ -159,19 +160,19 @@ export class Simulator {
             );
             this.commit(result.context);
 
-            result = this.contract.circuits.validateAddLiquidity(this.makeContext(), lpOut, this.makeNonce());
+            result = this.contract.circuits.AMM_validateXYToLP(this.makeContext(), lpOut, this.makeNonce());
             this.commit(result.context);
 
-            result = this.contract.circuits.completeAddLiquidity(this.makeContext(), this.makeNonce());
+            result = this.contract.circuits.AMM_mintLP(this.makeContext(), this.makeNonce());
             this.commit(result.context);
 
             if (this.currentLedger().coins.member(1n)) {
-                result = this.contract.circuits.mergeXLiquidity(this.makeContext());
+                result = this.contract.circuits.AMM_mergeX(this.makeContext());
                 this.commit(result.context);
             }
 
             if (this.currentLedger().coins.member(3n)) {
-                result = this.contract.circuits.mergeYLiquidity(this.makeContext());
+                result = this.contract.circuits.AMM_mergeY(this.makeContext());
                 this.commit(result.context);
             }
         });
@@ -181,7 +182,7 @@ export class Simulator {
         this.runAtomically(() => {
             const nonce = this.makeNonce();
 
-            let result = this.contract.circuits.removeLiquidity(
+            let result = this.contract.circuits.AMM_burnLP(
                 this.makeContext([this.makeIncomingOutput(this.lpReserves.color, lpIn, nonce)]),
                 lpIn,
                 defaultRecipient,
@@ -189,14 +190,14 @@ export class Simulator {
             );
             this.commit(result.context);
 
-            result = this.contract.circuits.validateRemoveLiquidity(this.makeContext(), xOut, yOut);
+            result = this.contract.circuits.AMM_validateLPToXY(this.makeContext(), xOut, yOut);
             this.commit(result.context);
 
-            result = this.contract.circuits.completeRemoveXLiquidity(this.makeContext());
+            result = this.contract.circuits.AMM_sendX(this.makeContext());
             this.commit(result.context);
 
             if (this.currentLedger().pendingOrder.is_some) {
-                result = this.contract.circuits.completeRemoveYLiquidity(this.makeContext());
+                result = this.contract.circuits.AMM_sendY(this.makeContext());
                 this.commit(result.context);
             }
         });
@@ -209,7 +210,7 @@ export class Simulator {
 
             const nonce = this.makeNonce();
 
-            let result = this.contract.circuits.swapXToY(
+            let result = this.contract.circuits.AMM_receiveX(
                 this.makeContext([this.makeIncomingOutput(this.xReserves.color, xIn, nonce)]),
                 xIn,
                 defaultRecipient,
@@ -217,14 +218,14 @@ export class Simulator {
             );
             this.commit(result.context);
 
-            result = this.contract.circuits.validateSwapXToY(this.makeContext(), xFee, yOut);
+            result = this.contract.circuits.AMM_validateXToY(this.makeContext(), xFee, yOut);
             this.commit(result.context);
 
-            result = this.contract.circuits.completeRemoveYLiquidity(this.makeContext());
+            result = this.contract.circuits.AMM_sendY(this.makeContext());
             this.commit(result.context);
 
             if (this.currentLedger().coins.member(1n)) {
-                result = this.contract.circuits.mergeXLiquidity(this.makeContext());
+                result = this.contract.circuits.AMM_mergeX(this.makeContext());
                 this.commit(result.context);
             }
         });
@@ -237,7 +238,7 @@ export class Simulator {
 
             const nonce = this.makeNonce();
 
-            let result = this.contract.circuits.swapYToX(
+            let result = this.contract.circuits.AMM_receiveY(
                 this.makeContext([this.makeIncomingOutput(this.yReserves.color, yIn, nonce)]),
                 yIn,
                 defaultRecipient,
@@ -245,21 +246,111 @@ export class Simulator {
             );
             this.commit(result.context);
 
-            result = this.contract.circuits.validateSwapYToX(this.makeContext(), xFee, xOut);
+            result = this.contract.circuits.AMM_validateYToX(this.makeContext(), xFee, xOut);
             this.commit(result.context);
 
-            result = this.contract.circuits.completeRemoveXLiquidity(this.makeContext());
+            result = this.contract.circuits.AMM_sendX(this.makeContext());
             this.commit(result.context);
 
             if (this.currentLedger().coins.member(3n)) {
-                result = this.contract.circuits.mergeYLiquidity(this.makeContext());
+                result = this.contract.circuits.AMM_mergeY(this.makeContext());
                 this.commit(result.context);
             }
         });
     }
 
+    zapInX({ xIn, xSwap, xFee, ySwap, lpOut }: { xIn: bigint; xSwap: bigint; xFee: bigint; ySwap: bigint; lpOut: bigint }) {
+        this.runAtomically(() => {
+            const nonce = this.makeNonce();
+
+            let result = this.contract.circuits.AMM_zapInX(
+                this.makeContext([this.makeIncomingOutput(this.xReserves.color, xIn, nonce)]),
+                xIn,
+                defaultRecipient,
+                nonce,
+            );
+            this.commit(result.context);
+
+            result = this.contract.circuits.AMM_validateXToLP(this.makeContext(), xSwap, xFee, ySwap, lpOut);
+            this.commit(result.context);
+
+            result = this.contract.circuits.AMM_mintLP(this.makeContext(), this.makeNonce());
+            this.commit(result.context);
+
+            if (this.currentLedger().coins.member(1n)) {
+                result = this.contract.circuits.AMM_mergeX(this.makeContext());
+                this.commit(result.context);
+            }
+        });
+    }
+
+    zapInY({ yIn, ySwap, xFee, xSwap, lpOut }: { yIn: bigint; ySwap: bigint; xFee: bigint; xSwap: bigint; lpOut: bigint }) {
+        this.runAtomically(() => {
+            const nonce = this.makeNonce();
+
+            let result = this.contract.circuits.AMM_zapInY(
+                this.makeContext([this.makeIncomingOutput(this.yReserves.color, yIn, nonce)]),
+                yIn,
+                defaultRecipient,
+                nonce,
+            );
+            this.commit(result.context);
+
+            result = this.contract.circuits.AMM_validateYToLP(this.makeContext(), ySwap, xFee, xSwap, lpOut);
+            this.commit(result.context);
+
+            result = this.contract.circuits.AMM_mintLP(this.makeContext(), this.makeNonce());
+            this.commit(result.context);
+
+            if (this.currentLedger().coins.member(3n)) {
+                result = this.contract.circuits.AMM_mergeY(this.makeContext());
+                this.commit(result.context);
+            }
+        });
+    }
+
+    zapOutX({ lpIn, xOut, ySwap, xFee, xSwap }: { lpIn: bigint; xOut: bigint; ySwap: bigint; xFee: bigint; xSwap: bigint }) {
+        this.runAtomically(() => {
+            const nonce = this.makeNonce();
+
+            let result = this.contract.circuits.AMM_zapOutX(
+                this.makeContext([this.makeIncomingOutput(this.lpReserves.color, lpIn, nonce)]),
+                lpIn,
+                defaultRecipient,
+                nonce,
+            );
+            this.commit(result.context);
+
+            result = this.contract.circuits.AMM_validateLPToX(this.makeContext(), xOut, ySwap, xFee, xSwap);
+            this.commit(result.context);
+
+            result = this.contract.circuits.AMM_sendX(this.makeContext());
+            this.commit(result.context);
+        });
+    }
+
+    zapOutY({ lpIn, yOut, xSwap, xFee, ySwap }: { lpIn: bigint; yOut: bigint; xSwap: bigint; xFee: bigint; ySwap: bigint }) {
+        this.runAtomically(() => {
+            const nonce = this.makeNonce();
+
+            let result = this.contract.circuits.AMM_zapOutY(
+                this.makeContext([this.makeIncomingOutput(this.lpReserves.color, lpIn, nonce)]),
+                lpIn,
+                defaultRecipient,
+                nonce,
+            );
+            this.commit(result.context);
+
+            result = this.contract.circuits.AMM_validateLPToY(this.makeContext(), yOut, xSwap, xFee, ySwap);
+            this.commit(result.context);
+
+            result = this.contract.circuits.AMM_sendY(this.makeContext());
+            this.commit(result.context);
+        });
+    }
+
     rewardTreasury() {
-        const { context } = this.contract.circuits.rewardTreasury(this.makeContext());
+        const { context } = this.contract.circuits.AMM_reward(this.makeContext());
 
         this.commit(context);
     }

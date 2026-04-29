@@ -1,0 +1,60 @@
+pragma language_version >= 0.22;
+
+module Common {
+    import CompactStandardLibrary;
+
+    export struct CircuitId {
+        address: ContractAddress,
+        hash: Bytes<32>
+    }
+
+    export enum AmmOrderKind {
+        SendX,
+        SendY,
+        MintLp,
+        ValidateSwapXToY,
+        ValidateSwapYToX,
+        ValidateDepositXYLiq,
+        ValidateDepositXLiq,
+        ValidateDepositYLiq,
+        ValidateWithdrawXYLiq,
+        ValidateWithdrawXLiq,
+        ValidateWithdrawYLiq
+    }
+
+    export struct AmmOrder {
+        kind: AmmOrderKind,
+        fstAmount: Uint<64>, // primary value
+        sndAmount: Uint<64>, // secondary value, usually 0, used when withdrawing both X and Y liquidity
+        returnsTo: CircuitId
+    }
+
+    export struct MarketOrder {
+        ownerCommitment: Bytes<32>,
+        amountSent: Uint<64>,
+        calls: CircuitId,
+        returnsTo: ZswapCoinPublicKey,
+        colorReturned: Bytes<32>,
+    }
+
+    /**
+     * Order contracts use this struct to call AMM circuits
+     */
+    export struct AmmCallArgs {
+        amount: Uint<64>,
+        nonce: Bytes<32>,
+        returnsTo: CircuitId
+    }
+
+    /**
+     * The AMM_sendX, AMM_sendY and AMM_mintLP circuits use this struct to callback to the order contract
+     */
+    export struct ReturnCallArgs {
+        amount: Uint<64>,
+        nonce: Bytes<32>
+    }
+
+    export circuit thisAddress(): Either<ZswapCoinPublicKey, ContractAddress> {
+        return right<ZswapCoinPublicKey, ContractAddress>(kernel.self());
+    }
+}

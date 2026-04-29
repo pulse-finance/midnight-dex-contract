@@ -5,6 +5,7 @@ import {
     encodeCoinPublicKey,
     encodeContractAddress,
     emptyZswapLocalState,
+    entryPointHash,
 } from "@midnight-ntwrk/compact-runtime";
 import { Contract, ledger } from "../dist/marketorder/contract/index.js";
 import {
@@ -69,6 +70,25 @@ function nextTx(previousContext: any, sender: { bytes: Uint8Array }) {
 const callOpening = 11n;
 
 describe("MarketOrder", () => {
+    it("hardcodes the MO_receiveFromAmm circuit id", () => {
+        const contract = new Contract({});
+        const { currentContractState, currentPrivateState } = contract.initialState(
+            createConstructorContext({}, owner),
+        );
+
+        const { result } = contract.circuits.getReceiveCircuitId(
+            createCircuitContext(
+                contractAddress,
+                emptyZswapLocalState(owner),
+                currentContractState,
+                currentPrivateState,
+            ),
+        );
+
+        expect(result.address.bytes).toEqual(encodeContractAddress(contractAddress));
+        expect(Buffer.from(result.hash).toString("hex")).toBe(entryPointHash("MO_receiveFromAmm"));
+    });
+
     it("stores one order and only lets the owner cancel it", () => {
         const contract = new Contract({});
         const { currentContractState, currentPrivateState } = contract.initialState(
@@ -190,11 +210,12 @@ describe("MarketOrder", () => {
             createConstructorContext({}, owner),
             10n,
             shieldedRecipient,
+            otherUser,
             coinColor,
             new Uint8Array(32).fill(10),
         );
 
-        const swapped = amm.circuits.swapXToY(
+        const swapped = amm.circuits.AMM_receiveX(
             createCircuitContext(
                 ammContractAddress,
                 {

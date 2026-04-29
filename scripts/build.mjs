@@ -13,7 +13,7 @@ const repoRoot = path.resolve(__dirname, "..");
 
 const targets = {
   amm: {
-    source: "src/ShieldedBatcherAMM.compact",
+    source: "src/Amm.compact",
     output: "dist/amm",
   },
   faucet: {
