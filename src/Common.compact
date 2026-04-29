@@ -37,12 +37,41 @@ module Common {
         colorReturned: Bytes<32>,
     }
 
+    export struct MintLpOrder {
+        ownerCommitment: Bytes<32>,
+        xAmountSent: Uint<64>,
+        yAmountSent: Uint<64>,
+        calls: CircuitId,
+        returnsTo: ZswapCoinPublicKey,
+        colorReturned: Bytes<32>,
+    }
+
+    export struct BurnLpOrder {
+        ownerCommitment: Bytes<32>,
+        amountSent: Uint<64>,
+        calls: CircuitId,
+        returnsTo: ZswapCoinPublicKey,
+        xColorReturned: Bytes<32>,
+        yColorReturned: Bytes<32>,
+    }
+
     /**
      * Order contracts use this struct to call AMM circuits
      */
     export struct AmmCallArgs {
         amount: Uint<64>,
         nonce: Bytes<32>,
+        returnsTo: CircuitId
+    }
+
+    /**
+     * Mint LP order contracts use this struct to call AMM two-sided deposit circuits
+     */
+    export struct MintLpAmmCallArgs {
+        xIn: Uint<64>,
+        yIn: Uint<64>,
+        xNonce: Bytes<32>,
+        yNonce: Bytes<32>,
         returnsTo: CircuitId
     }
 

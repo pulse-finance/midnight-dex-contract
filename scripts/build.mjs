@@ -24,9 +24,17 @@ const targets = {
     source: "src/MarketOrder.compact",
     output: "dist/marketorder",
   },
+  mintlporder: {
+    source: "src/MintLpOrder.compact",
+    output: "dist/mintlporder",
+  },
+  burnlporder: {
+    source: "src/BurnLpOrder.compact",
+    output: "dist/burnlporder",
+  },
 };
 
-const defaultTargets = ["faucet", "amm", "marketorder"];
+const defaultTargets = ["faucet", "amm", "marketorder", "mintlporder", "burnlporder"];
 
 function runCompact(binaryPath, args) {
   return new Promise((resolve, reject) => {

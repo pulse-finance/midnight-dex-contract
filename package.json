@@ -11,7 +11,9 @@
   "exports": {
     "./amm": "./dist/amm/contract/index.js",
     "./faucet": "./dist/faucet/contract/index.js",
-    "./marketorder": "./dist/marketorder/contract/index.js"
+    "./marketorder": "./dist/marketorder/contract/index.js",
+    "./mintlporder": "./dist/mintlporder/contract/index.js",
+    "./burnlporder": "./dist/burnlporder/contract/index.js"
   },
   "scripts": {
     "prepare": "node ./scripts/build.mjs",
@@ -19,6 +21,8 @@
     "build:amm": "node ./scripts/build.mjs amm",
     "build:faucet": "node ./scripts/build.mjs faucet",
     "build:marketorder": "node ./scripts/build.mjs marketorder",
+    "build:mintlporder": "node ./scripts/build.mjs mintlporder",
+    "build:burnlporder": "node ./scripts/build.mjs burnlporder",
     "test": "bun test"
   },
   "keywords": [],

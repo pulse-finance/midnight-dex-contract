@@ -4,29 +4,9 @@ This project is built on the Midnight Network.
 
 Midnight AMM DEX contract, written in Compact.
 
-## Install
+## Installing From GitHub
 
-`pnpm install` is enough.
-
-This package uses the `prepare` lifecycle hook to:
-
-1. download the official Compact tool for the current OS/CPU architecture
-2. bootstrap an isolated Compact artifact directory and pin the compiler version used by this repo
-3. compile the contracts into `dist`
-
-The first install is slower because it downloads Compact and generates the contract artifacts. Current upstream install docs for Compact are here: https://docs.midnight.network/getting-started/installation
-
-## Testing steps
-
-The contract unit tests can be run with the following commands:
-
-1. `pnpm install`
-2. `pnpm build`
-3. `pnpm test`
-
-## Use From GitHub
-
-Install this package directly from GitHub instead of publishing large artifacts to npm:
+Install this package directly from GitHub instead of using npm (the artifacts are too large for npm):
 
 ```bash
 pnpm add github:pulse-finance/midnight-dex-contract#<tag-or-commit>
@@ -40,6 +20,28 @@ You can then import the generated contracts through the package subpaths:
 import * as AmmContract from "@pulsefinance/dex-contract/amm";
 import * as FaucetContract from "@pulsefinance/dex-contract/faucet";
 import * as MarketOrderContract from "@pulsefinance/dex-contract/marketorder";
+import * as MintLpOrderContract from "@pulsefinance/dex-contract/mintlporder";
+import * as BurnLpOrderContract from "@pulsefinance/dex-contract/burnlporder";
 ```
 
 Pinning to a tag or commit is recommended so consumers get a reproducible Compact/compiler output.
+
+### `prepare` lifecycle hook details
+
+This package uses the `prepare` lifecycle hook to:
+
+1. download the official Compact tool for the current OS/CPU architecture
+2. bootstrap an isolated Compact artifact directory and pin the compiler version used by this repo
+3. compile the contracts into `dist`
+
+The first install is slower because it downloads Compact and generates the contract artifacts. Current upstream install docs for Compact are here: https://docs.midnight.network/getting-started/installation
+
+## Testing
+
+The contract unit tests can be run with the following commands:
+
+1. `pnpm install`
+2. `pnpm build`
+3. `pnpm test`
+
+

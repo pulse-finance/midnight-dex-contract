@@ -120,38 +120,39 @@ export circuit AmmInitXYLiq(
 export circuit AmmDepositXYLiq(
     xIn: Uint<64>,
     yIn: Uint<64>,
-    returnsTo: CircuitId,
-    nonce: Bytes<32>
+    xNonce: Bytes<32>,
+    yNonce: Bytes<32>,
+    returnsTo: CircuitId
 ): [] {
     assertOnlyBatcher();
     assert(lpCirculatingSupply > 0, "Not yet initialized");
     assert(!slot.is_some, "Another order is pending");
 
-    const contractAddress = getShieldedContractAddress();
+    const contractAddress = thisAddress();
 
-    const inputXCoin = ShieldedCoinInfo{
-        disclose(nonce),
+    const xCoin = ShieldedCoinInfo{
+        disclose(xNonce),
         xColor,
         disclose(xIn)
     };
 
-    receiveShielded(inputXCoin);
+    receiveShielded(xCoin);
 
     assert(!coins.member(1), "Coin position 1 already occupied");
 
-    coins.insertCoin(1, inputXCoin, contractAddress);
+    coins.insertCoin(1, xCoin, contractAddress);
 
-    const inputYCoin = ShieldedCoinInfo{
-        disclose(nonce),
+    const yCoin = ShieldedCoinInfo{
+        disclose(yNonce),
         yColor,
         disclose(yIn)
     };
 
-    receiveShielded(inputYCoin);
+    receiveShielded(yCoin);
 
     assert(!coins.member(3), "Coin position 3 already occupied");
 
-    coins.insertCoin(3, inputYCoin, contractAddress);
+    coins.insertCoin(3, yCoin, contractAddress);
 
     slot = some<AmmOrder>(AmmOrder{
         AmmOrderKind.ValidateDepositXYLiq,
@@ -166,25 +167,23 @@ export circuit AmmDepositXYLiq(
  */
 export circuit AmmDepositXLiq(
     xIn: Uint<64>,
-    returnsTo: CircuitId,
-    nonce: Bytes<32>
+    nonce: Bytes<32>,
+    returnsTo: CircuitId
 ): [] {
     assertOnlyBatcher();
     assert(lpCirculatingSupply > 0, "Not yet initialized");
     assert(!slot.is_some, "Another order is pending");
 
-    const inputXCoin = ShieldedCoinInfo{
+    const coin = ShieldedCoinInfo{
         disclose(nonce),
         xColor,
         disclose(xIn)
     };
 
-    receiveShielded(inputXCoin);
-
-    const contractAddress = getShieldedContractAddress();
+    receiveShielded(coin);
 
     assert(!coins.member(1), "Coin position 1 already occupied");
-    coins.insertCoin(1, inputXCoin, contractAddress);
+    coins.insertCoin(1, coin, thisAddress());
 
     slot = some<AmmOrder>(AmmOrder{
         AmmOrderKind.ValidateDepositXLiq,
@@ -199,8 +198,8 @@ export circuit AmmDepositXLiq(
  */
 export circuit AmmDepositYLiq(
     yIn: Uint<64>,
-    returnsTo: CircuitId,
-    nonce: Bytes<32>
+    nonce: Bytes<32>,
+    returnsTo: CircuitId
 ): [] {
     assertOnlyBatcher();
     assert(lpCirculatingSupply > 0, "Not yet initialized");
@@ -233,8 +232,8 @@ export circuit AmmDepositYLiq(
  */
 export circuit AmmSwapXToY(
     xIn: Uint<64>,
-    returnsTo: CircuitId,
-    nonce: Bytes<32>
+    nonce: Bytes<32>,
+    returnsTo: CircuitId
 ): [] {
     assertOnlyBatcher();
     assert(!slot.is_some, "Another order is pending");
@@ -265,8 +264,8 @@ export circuit AmmSwapXToY(
  */
 export circuit AmmSwapYToX(
     yIn: Uint<64>,
-    returnsTo: CircuitId,
-    nonce: Bytes<32>
+    nonce: Bytes<32>,
+    returnsTo: CircuitId
 ): [] {
     assertOnlyBatcher();
     assert(!slot.is_some, "Another order is pending");
@@ -298,8 +297,8 @@ export circuit AmmSwapYToX(
  */
 export circuit AmmWithdrawXYLiq(
     lpIn: Uint<64>,
-    returnsTo: CircuitId,
-    nonce: Bytes<32>
+    nonce: Bytes<32>,
+    returnsTo: CircuitId
 ): [] {
     assertOnlyBatcher();
     assert(!slot.is_some, "Amm slot not empty");
@@ -326,8 +325,8 @@ export circuit AmmWithdrawXYLiq(
  */
 export circuit AmmWithdrawXLiq(
     lpIn: Uint<64>,
-    returnsTo: CircuitId,
-    nonce: Bytes<32>
+    nonce: Bytes<32>,
+    returnsTo: CircuitId
 ): [] {
     assertOnlyBatcher();
     assert(!slot.is_some, "Amm slot not empty");
@@ -354,8 +353,8 @@ export circuit AmmWithdrawXLiq(
  */
 export circuit AmmWithdrawYLiq(
     lpIn: Uint<64>,
-    returnsTo: CircuitId,
-    nonce: Bytes<32>
+    nonce: Bytes<32>,
+    returnsTo: CircuitId
 ): [] {
     assertOnlyBatcher();
     assert(!slot.is_some, "Amm slot not empty");
