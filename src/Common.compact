@@ -35,6 +35,7 @@ module Common {
         calls: CircuitId,
         returnsTo: ZswapCoinPublicKey,
         colorReturned: Bytes<32>,
+        tickUponSend: Maybe<Uint<64>>,
     }
 
     export struct MintLpOrder {
@@ -44,6 +45,7 @@ module Common {
         calls: CircuitId,
         returnsTo: ZswapCoinPublicKey,
         colorReturned: Bytes<32>,
+        tickUponSend: Maybe<Uint<64>>,
     }
 
     export struct BurnLpOrder {
@@ -53,6 +55,7 @@ module Common {
         returnsTo: ZswapCoinPublicKey,
         xColorReturned: Bytes<32>,
         yColorReturned: Bytes<32>,
+        tickUponSend: Maybe<Uint<64>>,
     }
 
     /**
@@ -79,6 +82,7 @@ module Common {
      * The AMM_sendX, AMM_sendY and AMM_mintLP circuits use this struct to callback to the order contract
      */
     export struct ReturnCallArgs {
+        kind: Uint<8>,
         amount: Uint<64>,
         nonce: Bytes<32>
     }

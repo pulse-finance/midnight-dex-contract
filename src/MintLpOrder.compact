@@ -4,6 +4,8 @@ import CompactStandardLibrary;
 import "./Common";
 
 witness ownerSecret(): Bytes<32>;
+witness coinIndex(): Uint<8>;
+witness coinColor(): Bytes<32>;
 
 // This contract stores a single order plus the two shielded coins deposited for it.
 export ledger slot: Maybe<MintLpOrder>;
@@ -13,9 +15,11 @@ export ledger slot: Maybe<MintLpOrder>;
 export ledger coins: Map<Uint<8>, QualifiedShieldedCoinInfo>;
 
 ledger receiveCircuitHash: Bytes<32>;
+ledger ammTickCircuitHash: Bytes<32>;
 
-constructor(rch: Bytes<32>) {
+constructor(rch: Bytes<32>, atch: Bytes<32>) {
     receiveCircuitHash = disclose(rch);
+    ammTickCircuitHash = disclose(atch);
 }
 
 export circuit MintLpOrderOpen(
@@ -55,11 +59,12 @@ export circuit MintLpOrderOpen(
         disclose(yAmountSent),
         disclose(calls),
         disclose(returnsTo),
-        disclose(colorReturned)
+        disclose(colorReturned),
+        none<Uint<64>>()
     });
 }
 
-export circuit MintLpOrderSendToAmm(calleeRnd: Field): [] {
+export circuit MintLpOrderSendToAmm(calleeRnd: Field, ammTick: Uint<64>, ammTickRnd: Field): [] {
     assert(slot.is_some, "MintLpOrder slot is empty");
 
     const order = slot.value;
@@ -69,21 +74,22 @@ export circuit MintLpOrderSendToAmm(calleeRnd: Field): [] {
 
     const recipient = right<ZswapCoinPublicKey, ContractAddress>(order.calls.address);
 
+    // no need for "no-change" assertion here because full value of coin is sent
     const sendXResult = sendShielded(
         xCoin,
         recipient,
         xCoin.value
     );
 
-    assert(!sendXResult.change.is_some, "Unexpected X change while fulfilling order");
-
+    // no need for "no-change" assertion here because full value of coin is sent
     const sendYResult = sendShielded(
         yCoin,
         recipient,
         yCoin.value
     );
 
-    assert(!sendYResult.change.is_some, "Unexpected Y change while fulfilling order");
+    coins.remove(0);
+    coins.remove(1);
 
     kernel.claimContractCall(
         order.calls.address.bytes,
@@ -103,60 +109,91 @@ export circuit MintLpOrderSendToAmm(calleeRnd: Field): [] {
         )
     );
 
-    coins.remove(0);
-    coins.remove(1);
+    kernel.claimContractCall(
+        order.calls.address.bytes,
+        ammTickCircuitHash,
+        transientCommit<Uint<64>>(
+            ammTick,
+            ammTickRnd
+        )
+    );
+
+    slot = some<MintLpOrder>(MintLpOrder{
+        order.ownerCommitment,
+        order.xAmountSent,
+        order.yAmountSent,
+        order.calls,
+        order.returnsTo,
+        order.colorReturned,
+        some<Uint<64>>(disclose(ammTick))
+    });
 }
 
-export circuit MintLpOrderReceiveFromAmm(amountReturned: Uint<64>, nonce: Bytes<32>): [] {
+export circuit MintLpOrderReceiveFromAmm(_returnKind: Uint<8>, amountReturned: Uint<64>, nonce: Bytes<32>): [] {
     assert(slot.is_some, "MintLpOrder slot is empty");
 
     const order = slot.value;
 
     const coin = ShieldedCoinInfo{
         disclose(nonce),
-        disclose(order.colorReturned),
+        order.colorReturned,
         disclose(amountReturned)
     };
 
     receiveShielded(coin);
 
-    assert(!coins.member(0), "Coin position 0 already occupied");
-
-    coins.insertCoin(0, coin, thisAddress());
+    if (coins.member(0)) {
+        const existing: QualifiedShieldedCoinInfo = coins.lookup(0);
+        const merged = mergeCoinImmediate(existing, coin);
+        coins.insertCoin(0, merged, thisAddress());
+    } else {
+        coins.insertCoin(0, coin, thisAddress());
+    }
 }
 
 /**
  * Used both to cancel and to liquidate after completion
  */
-export circuit MintLpOrderClose(): [] {
+export circuit MintLpOrderClose(ammTick: Uint<64>, ammTickRnd: Field): [] {
     assert(slot.is_some, "MintLpOrder slot is empty");
 
     const order = slot.value;
 
     assertOnlyOwner(order);
 
-    const coin: QualifiedShieldedCoinInfo = coins.lookup(0);
+    if (order.tickUponSend.is_some) {
+        kernel.claimContractCall(
+            order.calls.address.bytes,
+            ammTickCircuitHash,
+            transientCommit<Uint<64>>(
+                ammTick,
+                ammTickRnd
+            )
+        );
 
+        assert(ammTick > order.tickUponSend.value, "AMM process not complete");
+    }
+
+    const xOrLpCoin: QualifiedShieldedCoinInfo = coins.lookup(0);
+
+    // no need for "no-change" assertion here, because full value of coin is sent   
     const sendResult = sendShielded(
-        coin,
+        xOrLpCoin,
         left<ZswapCoinPublicKey, ContractAddress>(order.returnsTo),
-        coin.value
+        xOrLpCoin.value
     );
-
-    assert(!sendResult.change.is_some, "Unexpected change while liquidating order");
 
     coins.remove(0);
 
     if (coins.member(1)) {
-        const secondCoin: QualifiedShieldedCoinInfo = coins.lookup(1);
+        const yCoin: QualifiedShieldedCoinInfo = coins.lookup(1);
 
-        const secondSendResult = sendShielded(
-            secondCoin,
+        // no need for "no-change" assertion here, because full value of coin is sent   
+        const sendResult = sendShielded(
+            yCoin,
             left<ZswapCoinPublicKey, ContractAddress>(order.returnsTo),
-            secondCoin.value
+            yCoin.value
         );
-
-        assert(!secondSendResult.change.is_some, "Unexpected change while liquidating second order coin");
 
         coins.remove(1);
     }

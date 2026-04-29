@@ -4,6 +4,8 @@ import CompactStandardLibrary;
 import "./Common";
 
 witness ownerSecret(): Bytes<32>;
+witness coinIndex(): Uint<8>;
+witness coinColor(): Bytes<32>;
 
 // This contract stores a single order plus the single shielded coin deposited for it.
 export ledger slot: Maybe<MarketOrder>;
@@ -12,9 +14,11 @@ export ledger slot: Maybe<MarketOrder>;
 export ledger coins: Map<Uint<8>, QualifiedShieldedCoinInfo>;
 
 ledger receiveCircuitHash: Bytes<32>;
+ledger ammTickCircuitHash: Bytes<32>;
 
-constructor(rch: Bytes<32>) {
+constructor(rch: Bytes<32>, atch: Bytes<32>) {
     receiveCircuitHash = disclose(rch);
+    ammTickCircuitHash = disclose(atch);
 }
 
 export circuit MarketOrderOpen(
@@ -42,11 +46,12 @@ export circuit MarketOrderOpen(
         disclose(amountSent),
         disclose(calls),
         disclose(returnsTo),
-        disclose(colorReturned)
+        disclose(colorReturned),
+        none<Uint<64>>()
     });
 }
 
-export circuit MarketOrderSendToAmm(calleeRnd: Field): [] {
+export circuit MarketOrderSendToAmm(calleeRnd: Field, ammTick: Uint<64>, ammTickRnd: Field): [] {
     assert(slot.is_some, "MarketOrder slot is empty");
 
     const order = slot.value;
@@ -59,7 +64,7 @@ export circuit MarketOrderSendToAmm(calleeRnd: Field): [] {
         coin.value
     );
 
-    assert(!sendResult.change.is_some, "Unexpected change while fulfilling order");
+    // no need for "no-change" assertion here because full value of coin is sent
 
     kernel.claimContractCall(
         order.calls.address.bytes,
@@ -78,47 +83,82 @@ export circuit MarketOrderSendToAmm(calleeRnd: Field): [] {
     );
 
     coins.remove(0);
+
+    kernel.claimContractCall(
+        order.calls.address.bytes,
+        ammTickCircuitHash,
+        transientCommit<Uint<64>>(
+            ammTick,
+            ammTickRnd
+        )
+    );
+
+    slot = some<MarketOrder>(MarketOrder{
+        order.ownerCommitment,
+        order.amountSent,
+        order.calls,
+        order.returnsTo,
+        order.colorReturned,
+        some<Uint<64>>(disclose(ammTick))
+    });
 }
 
-export circuit MarketOrderReceiveFromAmm(amountReturned: Uint<64>, nonce: Bytes<32>): [] {
+export circuit MarketOrderReceiveFromAmm(_returnKind: Uint<8>, amountReturned: Uint<64>, nonce: Bytes<32>): [] {
     assert(slot.is_some, "MarketOrder slot is empty");
-    
+
     const order = slot.value;
 
     const coin = ShieldedCoinInfo{
         disclose(nonce),
-        disclose(order.colorReturned),
+        order.colorReturned,
         disclose(amountReturned)
     };
 
     receiveShielded(coin);
 
-    assert(!coins.member(0), "Coin position 0 already occupied");
-
-    coins.insertCoin(0, coin, thisAddress());
+    if (coins.member(0)) {
+        const existing: QualifiedShieldedCoinInfo = coins.lookup(0);
+        const merged = mergeCoinImmediate(existing, coin);
+        coins.insertCoin(0, merged, thisAddress());
+    } else {
+        coins.insertCoin(0, coin, thisAddress());
+    }
 }
 
 /**
  * Used both to cancel and to liquidate after completion
  */
-export circuit MarketOrderClose(): [] {
+export circuit MarketOrderClose(ammTick: Uint<64>, ammTickRnd: Field): [] {
     assert(slot.is_some, "MarketOrder slot is empty");
 
     const order = slot.value;
 
     assertOnlyOwner(order);
 
+    if (order.tickUponSend.is_some) {
+        kernel.claimContractCall(
+            order.calls.address.bytes,
+            ammTickCircuitHash,
+            transientCommit<Uint<64>>(
+                ammTick,
+                ammTickRnd
+            )
+        );
+
+        assert(ammTick > order.tickUponSend.value, "AMM process not complete");
+    }
+
     const coin: QualifiedShieldedCoinInfo = coins.lookup(0);
 
+    // no need for "no-change" assertion here, because full value of coin is sent
     const sendResult = sendShielded(
         coin,
         left<ZswapCoinPublicKey, ContractAddress>(order.returnsTo),
         coin.value
     );
 
-    assert(!sendResult.change.is_some, "Unexpected change while liquidating order");
-
     coins.remove(0);
+
     slot = none<MarketOrder>();
 }
 
