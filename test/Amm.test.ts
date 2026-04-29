@@ -158,7 +158,7 @@ describe("init liquidity with an X to Y swap", () => {
 
     it("fails to swap X to Y if fee is too low", () => {
         expect(() => {
-            simulator.swapXToY({xIn: 1000n, xFee: 0n})
+            simulator.swapXToY({xIn: 2000n, xFee: 1n})
         }).toThrow(/Fee too low/)
     })
 
@@ -200,7 +200,7 @@ describe("init liquidity with an Y to X swap", () => {
 
     it("fails to swap Y to X if fee is too low", () => {
         expect(() => {
-            simulator.swapYToX({yIn: 2000n, xFee: 0n})
+            simulator.swapYToX({yIn: 4000n, xFee: 1n})
         }).toThrow(/Fee too low/)
     })
 
@@ -240,16 +240,16 @@ describe("zap liquidity paths", () => {
         simulator.initLiquidity({xIn: 1_000_000n, yIn: 2_000_000n, lpOut: 1_000_000n})
         simulator.zapInX({
             xIn: 1000n,
-            xSwap: 500n,
+            xSwap: 501n,
             xFee: 1n,
-            ySwap: 900n,
-            lpOut: 450n,
+            ySwap: 999n,
+            lpOut: 498n,
         })
 
         expect(simulator.getXLiquidity()).toBe(1_000_999n)
         expect(simulator.getYLiquidity()).toBe(2_000_000n)
         expect(simulator.getXRewards()).toBe(1n)
-        expect(simulator.getLPCirculatingSupply()).toBe(1_000_450n)
+        expect(simulator.getLPCirculatingSupply()).toBe(1_000_498n)
     })
 
     it("can zap Y into LP", () => {
@@ -258,9 +258,9 @@ describe("zap liquidity paths", () => {
         simulator.initLiquidity({xIn: 1_000_000n, yIn: 2_000_000n, lpOut: 1_000_000n})
         simulator.zapInY({
             yIn: 2000n,
-            ySwap: 1000n,
+            ySwap: 1002n,
             xFee: 1n,
-            xSwap: 498n,
+            xSwap: 499n,
             lpOut: 498n,
         })
 
@@ -448,10 +448,10 @@ describe("AMM assertion failures", () => {
         expect(() => simulator.validateDepositXY(101n)).toThrow(/Too many LP tokens taken \(bound by yIn\)/)
     })
 
-    it("rejects X zap-in fee, k, and both LP bounds", () => {
+    it("rejects X zap-in fee, k, split, and LP bounds", () => {
         let simulator = initialized()
         simulator.startDepositX({ xIn: 1000n })
-        expect(() => simulator.validateDepositX({ xSwap: 500n, xFee: 0n, ySwap: 1n, lpOut: 1n }))
+        expect(() => simulator.validateDepositX({ xSwap: 2000n, xFee: 1n, ySwap: 1n, lpOut: 1n }))
             .toThrow(/Fee too low/)
 
         simulator = initialized()
@@ -461,19 +461,24 @@ describe("AMM assertion failures", () => {
 
         simulator = initialized()
         simulator.startDepositX({ xIn: 1000n })
-        expect(() => simulator.validateDepositX({ xSwap: 500n, xFee: 1n, ySwap: 300n, lpOut: 334n }))
-            .toThrow(/Too many LP tokens taken \(bound by x\)/)
+        expect(() => simulator.validateDepositX({ xSwap: 3n, xFee: 1n, ySwap: 1n, lpOut: 1n }))
+            .toThrow(/X zap-in split too X heavy/)
 
         simulator = initialized()
         simulator.startDepositX({ xIn: 1000n })
-        expect(() => simulator.validateDepositX({ xSwap: 100n, xFee: 1n, ySwap: 50n, lpOut: 53n }))
-            .toThrow(/Too many LP tokens taken \(bound by y\)/)
+        expect(() => simulator.validateDepositX({ xSwap: 416n, xFee: 1n, ySwap: 293n, lpOut: 413n }))
+            .toThrow(/X zap-in split too Y heavy/)
+
+        simulator = initialized({ xIn: 1_000_000n, yIn: 2_000_000n, lpOut: 1_000_000n })
+        simulator.startDepositX({ xIn: 1000n })
+        expect(() => simulator.validateDepositX({ xSwap: 501n, xFee: 1n, ySwap: 999n, lpOut: 499n }))
+            .toThrow(/Too many LP tokens taken/)
     })
 
-    it("rejects Y zap-in fee, k, and both LP bounds", () => {
+    it("rejects Y zap-in fee, k, split, and LP bounds", () => {
         let simulator = initialized()
         simulator.startDepositY({ yIn: 1000n })
-        expect(() => simulator.validateDepositY({ ySwap: 500n, xFee: 0n, xSwap: 50n, lpOut: 1n }))
+        expect(() => simulator.validateDepositY({ ySwap: 500n, xFee: 1n, xSwap: 2000n, lpOut: 1n }))
             .toThrow(/Fee too low/)
 
         simulator = initialized()
@@ -483,12 +488,17 @@ describe("AMM assertion failures", () => {
 
         simulator = initialized()
         simulator.startDepositY({ yIn: 1000n })
-        expect(() => simulator.validateDepositY({ ySwap: 100n, xFee: 1n, xSwap: 50n, lpOut: 53n }))
-            .toThrow(/Too many LP tokens minted \(bound by x\)/)
+        expect(() => simulator.validateDepositY({ ySwap: 3n, xFee: 1n, xSwap: 1n, lpOut: 2n }))
+            .toThrow(/Y zap-in split too Y heavy/)
 
         simulator = initialized()
         simulator.startDepositY({ yIn: 1000n })
-        expect(() => simulator.validateDepositY({ ySwap: 800n, xFee: 1n, xSwap: 300n, lpOut: 112n }))
+        expect(() => simulator.validateDepositY({ ySwap: 417n, xFee: 1n, xSwap: 293n, lpOut: 413n }))
+            .toThrow(/Y zap-in split too X heavy/)
+
+        simulator = initialized({ xIn: 1_000_000n, yIn: 2_000_000n, lpOut: 1_000_000n })
+        simulator.startDepositY({ yIn: 2000n })
+        expect(() => simulator.validateDepositY({ ySwap: 1002n, xFee: 1n, xSwap: 499n, lpOut: 499n }))
             .toThrow(/Too many LP tokens minted \(bound by y\)/)
     })
 
@@ -505,7 +515,7 @@ describe("AMM assertion failures", () => {
 
         simulator = initialized()
         simulator.startWithdrawX({ lpIn: 100n })
-        expect(() => simulator.validateWithdrawX({ xOut: 150n, ySwap: 100n, xFee: 0n, xSwap: 50n }))
+        expect(() => simulator.validateWithdrawX({ xOut: 2100n, ySwap: 100n, xFee: 1n, xSwap: 2000n }))
             .toThrow(/Fee too low/)
 
         simulator = initialized()
@@ -525,9 +535,9 @@ describe("AMM assertion failures", () => {
         expect(() => simulator.validateWithdrawY({ yOut: 101n, xSwap: 100n, xFee: 0n, ySwap: 0n }))
             .toThrow(/Too many Y tokens taken/)
 
-        simulator = initialized()
-        simulator.startWithdrawY({ lpIn: 100n })
-        expect(() => simulator.validateWithdrawY({ yOut: 150n, xSwap: 100n, xFee: 0n, ySwap: 50n }))
+        simulator = initialized({ xIn: 1_000_000n, yIn: 2_000_000n, lpOut: 1_000_000n })
+        simulator.startWithdrawY({ lpIn: 2000n })
+        expect(() => simulator.validateWithdrawY({ yOut: 4050n, xSwap: 2000n, xFee: 1n, ySwap: 50n }))
             .toThrow(/Fee too low/)
 
         simulator = initialized()
@@ -539,7 +549,7 @@ describe("AMM assertion failures", () => {
     it("rejects occupied temporary coin positions", () => {
         let simulator = initialized({ xIn: 1_000_000n, yIn: 2_000_000n, lpOut: 1_000_000n })
         simulator.startDepositX({ xIn: 1000n })
-        simulator.validateDepositX({ xSwap: 500n, xFee: 1n, ySwap: 900n, lpOut: 450n })
+        simulator.validateDepositX({ xSwap: 501n, xFee: 1n, ySwap: 999n, lpOut: 498n })
         simulator.mintLp()
         expect(() => simulator.startDepositX({ xIn: 1000n })).toThrow(/Coin position 1 already occupied/)
         expect(() => simulator.startDepositXY({ xIn: 1000n, yIn: 1000n })).toThrow(/Coin position 1 already occupied/)
@@ -547,7 +557,7 @@ describe("AMM assertion failures", () => {
 
         simulator = initialized({ xIn: 1_000_000n, yIn: 2_000_000n, lpOut: 1_000_000n })
         simulator.startDepositY({ yIn: 2000n })
-        simulator.validateDepositY({ ySwap: 1000n, xFee: 1n, xSwap: 498n, lpOut: 498n })
+        simulator.validateDepositY({ ySwap: 1002n, xFee: 1n, xSwap: 499n, lpOut: 498n })
         simulator.mintLp()
         expect(() => simulator.startDepositY({ yIn: 2000n })).toThrow(/Coin position 3 already occupied/)
         expect(() => simulator.startDepositXY({ xIn: 1000n, yIn: 1000n })).toThrow(/Coin position 3 already occupied/)
@@ -605,11 +615,21 @@ describe("AMM assertion failures", () => {
 
         simulator = initialized({ xIn: 1_000_000n, yIn: 2_000_000n, lpOut: 1_000_000n })
         simulator.startDepositX({ xIn: 1000n })
+        expect(() => simulator.validateDepositX({ xSwap: 1000n, xFee: 1n, ySwap: 0n, lpOut: 0n }))
+            .toThrow(/Post-swap k is too high/)
+
+        simulator = initialized({ xIn: 1_000_000n, yIn: 2_000_000n, lpOut: 1_000_000n })
+        simulator.startDepositX({ xIn: 1000n })
         expect(() => simulator.validateDepositX({ xSwap: 0n, xFee: 0n, ySwap: 0n, lpOut: 0n })).toThrow()
 
         simulator = initialized({ xIn: 1_000_000n, yIn: 2_000_000n, lpOut: 1_000_000n })
         simulator.startDepositY({ yIn: 2000n })
         expect(() => simulator.validateDepositY({ ySwap: 2000n, xFee: 0n, xSwap: 0n, lpOut: 0n })).toThrow()
+
+        simulator = initialized({ xIn: 1_000_000n, yIn: 2_000_000n, lpOut: 1_000_000n })
+        simulator.startDepositY({ yIn: 2000n })
+        expect(() => simulator.validateDepositY({ ySwap: 2000n, xFee: 1n, xSwap: 1n, lpOut: 0n }))
+            .toThrow(/Post-swap k is too high/)
 
         simulator = initialized({ xIn: 1_000_000n, yIn: 2_000_000n, lpOut: 1_000_000n })
         simulator.startDepositY({ yIn: 2000n })
@@ -627,11 +647,21 @@ describe("AMM assertion failures", () => {
 
         simulator = initialized({ xIn: 1_000_000n, yIn: 2_000_000n, lpOut: 1_000_000n })
         simulator.startWithdrawX({ lpIn: 1000n })
+        expect(() => simulator.validateWithdrawX({ xOut: 1001n, ySwap: 2000n, xFee: 1n, xSwap: 1n }))
+            .toThrow(/Post-swap k is too high/)
+
+        simulator = initialized({ xIn: 1_000_000n, yIn: 2_000_000n, lpOut: 1_000_000n })
+        simulator.startWithdrawX({ lpIn: 1000n })
         expect(() => simulator.validateWithdrawX({ xOut: 1000n, ySwap: 0n, xFee: 0n, xSwap: 0n })).toThrow(/Not enough Y/)
 
         simulator = initialized({ xIn: 1_000_000n, yIn: 2_000_000n, lpOut: 1_000_000n })
         simulator.startWithdrawY({ lpIn: 1000n })
         expect(() => simulator.validateWithdrawY({ yOut: 0n, xSwap: 0n, xFee: 0n, ySwap: 0n })).toThrow()
+
+        simulator = initialized({ xIn: 1_000_000n, yIn: 2_000_000n, lpOut: 1_000_000n })
+        simulator.startWithdrawY({ lpIn: 1000n })
+        expect(() => simulator.validateWithdrawY({ yOut: 2001n, xSwap: 1000n, xFee: 1n, ySwap: 1n }))
+            .toThrow(/Post-swap k is too high/)
 
         simulator = initialized({ xIn: 1_000_000n, yIn: 2_000_000n, lpOut: 1_000_000n })
         simulator.startWithdrawY({ lpIn: 1000n })
