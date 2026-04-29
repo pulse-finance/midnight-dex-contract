@@ -35,6 +35,17 @@ describe("MintLpOrder", () => {
             .toThrow(/MintLpOrder slot is empty/);
     });
 
+    it("rejects AMM return coins before the order has been sent", () => {
+        const simulator = new MintLpOrderSimulator();
+        simulator.openOrder();
+
+        expect(() => simulator.receiveFromAmm())
+            .toThrow(/MintLpOrder has not been sent to AMM/);
+
+        simulator.sendToAmm();
+        simulator.receiveFromAmm({ returnKind: 1n });
+    });
+
     it("opens one order with X and Y coins and only the owner secret can close it", () => {
         const simulator = new MintLpOrderSimulator();
         simulator.openOrder();

@@ -775,3 +775,63 @@ describe("AMM assertion failures", () => {
         expect(() => simulator.validateWithdrawY({ yOut: 2000n, xSwap: 0n, xFee: 0n, ySwap: 0n })).toThrow(/Too few X/)
     })
 })
+
+describe("zero-fee pools", () => {
+    it("allows zero-fee X-to-Y swaps and rejects positive xFee", () => {
+        const simulator = new AmmSimulator(treasury, { fee: 0n })
+
+        simulator.initLiquidity({ xIn: 1_000_000n, yIn: 2_000_000n, lpOut: 1_000_000n })
+        simulator.startSwapXToY({ xIn: 1000n })
+        simulator.validateSwapXToY({ xFee: 0n, yOut: 1998n })
+        simulator.sendY()
+
+        expect(simulator.getXLiquidity()).toBe(1_001_000n)
+        expect(simulator.getYLiquidity()).toBe(1_998_002n)
+        expect(simulator.getXRewards()).toBe(0n)
+
+        const invalid = new AmmSimulator(treasury, { fee: 0n })
+        invalid.initLiquidity({ xIn: 1_000_000n, yIn: 2_000_000n, lpOut: 1_000_000n })
+        invalid.startSwapXToY({ xIn: 1000n })
+        expect(() => invalid.validateSwapXToY({ xFee: 1n, yOut: 1998n })).toThrow(/Fee too high/)
+    })
+
+    it("allows zero-fee Y-to-X swaps and rejects positive xFee", () => {
+        const simulator = new AmmSimulator(treasury, { fee: 0n })
+
+        simulator.initLiquidity({ xIn: 1_000_000n, yIn: 2_000_000n, lpOut: 1_000_000n })
+        simulator.startSwapYToX({ yIn: 2000n })
+        simulator.validateSwapYToX({ xFee: 0n, xOut: 999n })
+        simulator.sendX()
+
+        expect(simulator.getXLiquidity()).toBe(999_001n)
+        expect(simulator.getYLiquidity()).toBe(2_002_000n)
+        expect(simulator.getXRewards()).toBe(0n)
+
+        const invalid = new AmmSimulator(treasury, { fee: 0n })
+        invalid.initLiquidity({ xIn: 1_000_000n, yIn: 2_000_000n, lpOut: 1_000_000n })
+        invalid.startSwapYToX({ yIn: 2000n })
+        expect(() => invalid.validateSwapYToX({ xFee: 1n, xOut: 998n })).toThrow(/Fee too high/)
+    })
+
+    it("rejects positive xFee for zero-fee zap and withdrawal validators", () => {
+        const depositX = new AmmSimulator(treasury, { fee: 0n })
+        depositX.initLiquidity({ xIn: 1_000_000n, yIn: 2_000_000n, lpOut: 1_000_000n })
+        depositX.startDepositX({ xIn: 1000n })
+        expect(() => depositX.validateDepositX({ xSwap: 500n, xFee: 1n, ySwap: 999n, lpOut: 498n })).toThrow(/Fee too high/)
+
+        const depositY = new AmmSimulator(treasury, { fee: 0n })
+        depositY.initLiquidity({ xIn: 1_000_000n, yIn: 2_000_000n, lpOut: 1_000_000n })
+        depositY.startDepositY({ yIn: 2000n })
+        expect(() => depositY.validateDepositY({ ySwap: 1002n, xFee: 1n, xSwap: 499n, lpOut: 498n })).toThrow(/Fee too high/)
+
+        const withdrawX = new AmmSimulator(treasury, { fee: 0n })
+        withdrawX.initLiquidity({ xIn: 1_000_000n, yIn: 1_000_000n, lpOut: 1_000_000n })
+        withdrawX.startWithdrawX({ lpIn: 1000n })
+        expect(() => withdrawX.validateWithdrawX({ xOut: 1998n, ySwap: 1000n, xFee: 1n, xSwap: 998n })).toThrow(/Fee too high/)
+
+        const withdrawY = new AmmSimulator(treasury, { fee: 0n })
+        withdrawY.initLiquidity({ xIn: 1_000_000n, yIn: 1_000_000n, lpOut: 1_000_000n })
+        withdrawY.startWithdrawY({ lpIn: 1000n })
+        expect(() => withdrawY.validateWithdrawY({ yOut: 1997n, xSwap: 999n, xFee: 1n, ySwap: 998n })).toThrow(/Fee too high/)
+    })
+})

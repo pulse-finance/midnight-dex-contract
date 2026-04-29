@@ -595,8 +595,7 @@ export circuit AmmUpdate(f: Uint<16>, t: Either<ZswapCoinPublicKey, ContractAddr
  * Validates the ledger state changes of liquidity provision with X+Y
  */
 export circuit AmmValidateDepositXYLiq(
-    lpOut: Uint<64>,
-    nonce: Bytes<32>
+    lpOut: Uint<64>
 ): [] {
     assertOnlyBatcher();
 
@@ -659,8 +658,12 @@ export circuit AmmValidateDepositXLiq(
 
     const xIn = order.fstAmount;
 
-    assert((xFee - 1) * 10000 <= xSwap * feeBps, "Fee too high");
-    assert(xFee * 10000 >= xSwap * feeBps, "Fee too low");
+    if (feeBps == 0) {
+        assert(xFee == 0, "Fee too high");
+    } else {
+        assert((xFee - 1) * 10000 <= xSwap * feeBps, "Fee too high");
+        assert(xFee * 10000 >= xSwap * feeBps, "Fee too low");
+    }
 
     const xLiqAfterSwap = xLiquidity + disclose(xSwap - xFee) as Uint<128>;
     const yLiqAfterSwap = yLiquidity - disclose(ySwap);
@@ -721,8 +724,12 @@ export circuit AmmValidateDepositYLiq(
 
     const yIn = order.fstAmount;
 
-    assert((xFee - 1) * (10000 - feeBps) <= xSwap * feeBps, "Fee too high");
-    assert(xFee * (10000 - feeBps) >= xSwap * feeBps, "Fee too low");
+    if (feeBps == 0) {
+        assert(xFee == 0, "Fee too high");
+    } else {
+        assert((xFee - 1) * (10000 - feeBps) <= xSwap * feeBps, "Fee too high");
+        assert(xFee * (10000 - feeBps) >= xSwap * feeBps, "Fee too low");
+    }
     
     const xLiqAfterSwap = xLiquidity - disclose(xSwap + xFee);
     const yLiqAfterSwap = yLiquidity + disclose(ySwap) as Uint<128>;
@@ -782,8 +789,12 @@ export circuit AmmValidateSwapXToY(
 
     const xIn = order.fstAmount;
 
-    assert((xFee - 1) * 10000 <= xIn * feeBps, "Fee too high");
-    assert(xFee * 10000 >= xIn * feeBps, "Fee too low");
+    if (feeBps == 0) {
+        assert(xFee == 0, "Fee too high");
+    } else {
+        assert((xFee - 1) * 10000 <= xIn * feeBps, "Fee too high");
+        assert(xFee * 10000 >= xIn * feeBps, "Fee too low");
+    }
     
     const newXLiquidity = xLiquidity + disclose(xIn - xFee) as Uint<128>;
     const newYLiquidity = yLiquidity - disclose(yOut);
@@ -822,8 +833,12 @@ export circuit AmmValidateSwapYToX(
 
     assert(order.kind == AmmOrderKind.ValidateSwapYToX, "Pending order isn't a ValidateSwapYToX order");
 
-    assert((xFee - 1) * (10000 - feeBps) <= xOut * feeBps, "Fee too high");
-    assert(xFee * (10000 - feeBps) >= xOut * feeBps, "Fee too low");
+    if (feeBps == 0) {
+        assert(xFee == 0, "Fee too high");
+    } else {
+        assert((xFee - 1) * (10000 - feeBps) <= xOut * feeBps, "Fee too high");
+        assert(xFee * (10000 - feeBps) >= xOut * feeBps, "Fee too low");
+    }
 
     const yIn = order.fstAmount;
 
@@ -933,8 +948,12 @@ export circuit AmmValidateWithdrawXLiq(
     assert(yRemoveLhsLower <= yRemoveRhs, "Too many Y tokens taken");
     assert(yRemoveLhsUpper >= yRemoveRhs, "Not enough Y tokens taken");
 
-    assert((xFee - 1) * (10000 - feeBps) <= xSwap * feeBps, "Fee too high");
-    assert(xFee * (10000 - feeBps) >= xSwap * feeBps, "Fee too low");
+    if (feeBps == 0) {
+        assert(xFee == 0, "Fee too high");
+    } else {
+        assert((xFee - 1) * (10000 - feeBps) <= xSwap * feeBps, "Fee too high");
+        assert(xFee * (10000 - feeBps) >= xSwap * feeBps, "Fee too low");
+    }
 
     const xLiquidityBeforeSwap = xLiquidity - xLiqRemovedBeforeSwap;
     const yLiquidityBeforeSwap = yLiquidity - yLiqRemovedBeforeSwap;
@@ -995,8 +1014,12 @@ export circuit AmmValidateWithdrawYLiq(
     assert(yRemoveLhsLower <= yRemoveRhs, "Too many Y tokens taken");
     assert(yRemoveLhsUpper >= yRemoveRhs, "Too few Y tokens taken");
 
-    assert((xFee - 1) * 10000 <= xSwap * feeBps, "Fee too high");
-    assert(xFee * 10000 >= xSwap * feeBps, "Fee too low");
+    if (feeBps == 0) {
+        assert(xFee == 0, "Fee too high");
+    } else {
+        assert((xFee - 1) * 10000 <= xSwap * feeBps, "Fee too high");
+        assert(xFee * 10000 >= xSwap * feeBps, "Fee too low");
+    }
 
     const xLiqBeforeSwap = xLiquidity - xLiqRemovedBeforeSwap;
     const yLiqBeforeSwap = yLiquidity - yLiqRemovedBeforeSwap;

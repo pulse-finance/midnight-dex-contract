@@ -44,6 +44,18 @@ describe("MarketOrder", () => {
             .toThrow(/MarketOrder slot is empty/);
     });
 
+    it("rejects AMM return coins before the order has been sent", () => {
+        const simulator = new MarketOrderSimulator();
+        simulator.openOrder();
+
+        expect(() => simulator.receiveFromAmm())
+            .toThrow(/MarketOrder has not been sent to AMM/);
+
+        simulator.sendToAmm();
+
+        simulator.receiveFromAmm();
+    });
+
     it("opens one order and only the owner secret can close it", () => {
         const simulator = new MarketOrderSimulator();
         simulator.openOrder();

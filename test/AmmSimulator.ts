@@ -174,7 +174,7 @@ export class AmmSimulator {
             );
             this.commit(result.context);
 
-            result = this.contract.circuits.AmmValidateDepositXYLiq(this.makeContext(), lpOut, this.makeNonce());
+            result = this.contract.circuits.AmmValidateDepositXYLiq(this.makeContext(), lpOut);
             this.commit(result.context);
 
             result = this.contract.circuits.AmmMintLp(this.makeContext(), this.makeNonce(), 0n);
@@ -479,7 +479,7 @@ export class AmmSimulator {
     }
 
     validateDepositXY(lpOut: bigint) {
-        const { context } = this.contract.circuits.AmmValidateDepositXYLiq(this.makeContext(), lpOut, this.makeNonce());
+        const { context } = this.contract.circuits.AmmValidateDepositXYLiq(this.makeContext(), lpOut);
 
         this.commit(context);
     }

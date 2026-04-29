@@ -134,6 +134,8 @@ export circuit MintLpOrderReceiveFromAmm(_returnKind: Uint<8>, amountReturned: U
 
     const order = slot.value;
 
+    assert(order.tickUponSend.is_some, "MintLpOrder has not been sent to AMM");
+
     const coin = ShieldedCoinInfo{
         disclose(nonce),
         order.colorReturned,

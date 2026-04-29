@@ -6,7 +6,7 @@ import {
     emptyZswapLocalState,
     entryPointHash,
 } from "@midnight-ntwrk/compact-runtime";
-import { Contract, ledger } from "../dist/burnlporder/contract/index.js";
+import { Contract, ledger, type Witnesses } from "../dist/burnlporder/contract/index.js";
 
 type CoinInfo = {
     nonce: Uint8Array;
@@ -54,13 +54,13 @@ export class BurnLpOrderSimulator {
     private currentContractState: any;
     private currentPrivateState: any;
     private nextCoinIndex = 0n;
-    private nextCoinColor = burnLpXReturnColor;
+    private nextCoinColor: Uint8Array = burnLpXReturnColor;
 
     constructor(secret = burnLpOwnerSecret) {
         this.contract = new Contract({
-            ownerSecret: (context) => [context.privateState, secret],
-            coinIndex: (context) => [context.privateState, this.nextCoinIndex],
-            coinColor: (context) => [context.privateState, this.nextCoinColor],
+            ownerSecret: (context: Parameters<Witnesses<any>["ownerSecret"]>[0]) => [context.privateState, secret],
+            coinIndex: (context: { privateState: any }) => [context.privateState, this.nextCoinIndex],
+            coinColor: (context: { privateState: any }) => [context.privateState, this.nextCoinColor],
         });
 
         const { currentContractState, currentPrivateState } = this.contract.initialState(
@@ -75,14 +75,16 @@ export class BurnLpOrderSimulator {
 
     static makeContract(secret = burnLpOwnerSecret) {
         return new Contract({
-            ownerSecret: (context) => [context.privateState, secret],
-            coinIndex: (context) => [context.privateState, 0n],
-            coinColor: (context) => [context.privateState, burnLpXReturnColor],
+            ownerSecret: (context: Parameters<Witnesses<any>["ownerSecret"]>[0]) => [context.privateState, secret],
+            coinIndex: (context: { privateState: any }) => [context.privateState, 0n],
+            coinColor: (context: { privateState: any }) => [context.privateState, burnLpXReturnColor],
         });
     }
 
     ownerCommitment() {
-        return this.contract._persistentHash_1([
+        return (this.contract as Contract & {
+            _persistentHash_1(value: [Uint8Array, Uint8Array]): Uint8Array;
+        })._persistentHash_1([
             encodeContractAddress(burnLpContractAddress),
             burnLpOwnerSecret,
         ]);
@@ -150,6 +152,17 @@ export class BurnLpOrderSimulator {
         coinIndex = 1n,
     } = {}) {
         return this.receiveFromAmm({ amount, color, nonce, sender, returnKind: 1n, coinIndex });
+    }
+
+    receiveUnexpectedFromAmm({
+        amount = burnLpYReturnedValue,
+        color = burnLpYReturnColor,
+        nonce = burnLpYReturnedNonce,
+        sender = burnLpOtherUser,
+        returnKind = 2n,
+        coinIndex = 2n,
+    } = {}) {
+        return this.receiveFromAmm({ amount, color, nonce, sender, returnKind, coinIndex });
     }
 
     close({ sender = burnLpOwner, secret = burnLpOwnerSecret, ammTick = 1n, ammTickRnd = burnLpTickCallOpening } = {}) {

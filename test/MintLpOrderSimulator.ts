@@ -6,7 +6,7 @@ import {
     emptyZswapLocalState,
     entryPointHash,
 } from "@midnight-ntwrk/compact-runtime";
-import { Contract, ledger } from "../dist/mintlporder/contract/index.js";
+import { Contract, ledger, type Witnesses } from "../dist/mintlporder/contract/index.js";
 
 type CoinInfo = {
     nonce: Uint8Array;
@@ -53,13 +53,13 @@ export class MintLpOrderSimulator {
     private currentContractState: any;
     private currentPrivateState: any;
     private nextCoinIndex = 0n;
-    private nextCoinColor = mintLpReturnColor;
+    private nextCoinColor: Uint8Array = mintLpReturnColor;
 
     constructor(secret = mintLpOwnerSecret) {
         this.contract = new Contract({
-            ownerSecret: (context) => [context.privateState, secret],
-            coinIndex: (context) => [context.privateState, this.nextCoinIndex],
-            coinColor: (context) => [context.privateState, this.nextCoinColor],
+            ownerSecret: (context: Parameters<Witnesses<any>["ownerSecret"]>[0]) => [context.privateState, secret],
+            coinIndex: (context: { privateState: any }) => [context.privateState, this.nextCoinIndex],
+            coinColor: (context: { privateState: any }) => [context.privateState, this.nextCoinColor],
         });
 
         const { currentContractState, currentPrivateState } = this.contract.initialState(
@@ -74,14 +74,16 @@ export class MintLpOrderSimulator {
 
     static makeContract(secret = mintLpOwnerSecret) {
         return new Contract({
-            ownerSecret: (context) => [context.privateState, secret],
-            coinIndex: (context) => [context.privateState, 0n],
-            coinColor: (context) => [context.privateState, mintLpReturnColor],
+            ownerSecret: (context: Parameters<Witnesses<any>["ownerSecret"]>[0]) => [context.privateState, secret],
+            coinIndex: (context: { privateState: any }) => [context.privateState, 0n],
+            coinColor: (context: { privateState: any }) => [context.privateState, mintLpReturnColor],
         });
     }
 
     ownerCommitment() {
-        return this.contract._persistentHash_1([
+        return (this.contract as Contract & {
+            _persistentHash_1(value: [Uint8Array, Uint8Array]): Uint8Array;
+        })._persistentHash_1([
             encodeContractAddress(mintLpContractAddress),
             mintLpOwnerSecret,
         ]);
@@ -139,7 +141,7 @@ export class MintLpOrderSimulator {
         color = mintLpReturnColor,
         nonce = mintLpReturnedNonce,
         sender = mintLpOtherUser,
-        returnKind = 0n,
+        returnKind = 2n,
         coinIndex = 0n,
     } = {}) {
         this.nextCoinIndex = coinIndex;

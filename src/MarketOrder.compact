@@ -108,6 +108,8 @@ export circuit MarketOrderReceiveFromAmm(_returnKind: Uint<8>, amountReturned: U
 
     const order = slot.value;
 
+    assert(order.tickUponSend.is_some, "MarketOrder has not been sent to AMM");
+
     const coin = ShieldedCoinInfo{
         disclose(nonce),
         order.colorReturned,

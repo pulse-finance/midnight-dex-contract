@@ -112,6 +112,8 @@ export circuit BurnLpOrderReceiveFromAmm(returnKind: Uint<8>, amountReturned: Ui
 
     const order = slot.value;
 
+    assert(order.tickUponSend.is_some, "BurnLpOrder has not been sent to AMM");
+
     const coin = ShieldedCoinInfo{
         disclose(nonce),
         returnColor(disclose(returnKind), order),

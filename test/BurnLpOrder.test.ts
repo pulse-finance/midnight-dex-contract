@@ -35,6 +35,19 @@ describe("BurnLpOrder", () => {
             .toThrow(/BurnLpOrder slot is empty/);
     });
 
+    it("rejects AMM return coins before the order has been sent and rejects unexpected return kinds", () => {
+        const simulator = new BurnLpOrderSimulator();
+        simulator.openOrder();
+
+        expect(() => simulator.receiveXFromAmm())
+            .toThrow(/BurnLpOrder has not been sent to AMM/);
+
+        simulator.sendToAmm();
+
+        expect(() => simulator.receiveUnexpectedFromAmm())
+            .toThrow(/Unexpected return kind/);
+    });
+
     it("opens one order with an LP coin and only the owner secret can close it", () => {
         const simulator = new BurnLpOrderSimulator();
         simulator.openOrder();
