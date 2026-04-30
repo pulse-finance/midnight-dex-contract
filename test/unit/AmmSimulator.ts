@@ -5,7 +5,7 @@ import {
     encodeContractAddress,
     entryPointHash,
 } from "@midnight-ntwrk/compact-runtime";
-import { Contract, ledger } from "../dist/amm/contract/index.js";
+import { Contract, ledger } from "../../dist/amm/contract/index.js";
 import { type Address } from "./addresses.js";
 
 type CoinInfo = {

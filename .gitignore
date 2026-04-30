@@ -2,3 +2,5 @@ dist
 node_modules
 *.tgz
 *.tsbuildinfo
+midnight-dex-contract-integ-db
+integ-tests.plan.md

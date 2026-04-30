@@ -4,7 +4,7 @@ import {
     createConstructorContext,
     emptyZswapLocalState,
 } from "@midnight-ntwrk/compact-runtime";
-import { ledger as ammLedger, Contract as AMMContract } from "../dist/amm/contract/index.js";
+import { ledger as ammLedger, Contract as AMMContract } from "../../dist/amm/contract/index.js";
 import {
     ammContractAddress,
     ammSwapCircuit,

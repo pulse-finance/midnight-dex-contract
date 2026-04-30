@@ -38,10 +38,26 @@ The first install is slower because it downloads Compact and generates the contr
 
 ## Testing
 
+### Unit tests
+
 The contract unit tests can be run with the following commands:
 
 1. `pnpm install`
 2. `pnpm build`
 3. `pnpm test`
 
+### Integration tests
+
+The integration test suite in [test/integ.ts](/home/christian/Src/Pulse/midnight-dex-contract/test/integ.ts) runs against a local undeployed Midnight network.
+
+Start the local Docker services first:
+
+1. `cd ../claim-contract-call-tests`
+2. `docker compose -f ./compose.yml up -d`
+
+Then, from this repository, run the integration test:
+
+1. `pnpm install`
+2. `pnpm build`
+3. `bun test ./test/integ.ts`
 

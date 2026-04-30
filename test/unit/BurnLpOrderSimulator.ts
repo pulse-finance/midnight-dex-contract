@@ -6,7 +6,7 @@ import {
     emptyZswapLocalState,
     entryPointHash,
 } from "@midnight-ntwrk/compact-runtime";
-import { Contract, ledger, type Witnesses } from "../dist/burnlporder/contract/index.js";
+import { Contract, ledger, type Witnesses } from "../../dist/burnlporder/contract/index.js";
 
 type CoinInfo = {
     nonce: Uint8Array;
