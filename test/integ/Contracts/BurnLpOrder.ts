@@ -1,19 +1,32 @@
-import { dirname } from "node:path";
-import { fileURLToPath } from "node:url";
-import { CompiledContract } from "@midnight-ntwrk/compact-js";
-import type { Contract as CompactContract } from "@midnight-ntwrk/compact-js/effect/Contract";
-import { entryPointHash } from "@midnight-ntwrk/compact-runtime";
-import { ContractAddress } from "@midnight-ntwrk/ledger-v8";
-import { createCircuitCallTxInterface, createUnprovenCallTxFromInitialStates, deployContract, getPublicStates, type ContractProviders } from "@midnight-ntwrk/midnight-js-contracts";
-import { MidnightProviders } from "@midnight-ntwrk/midnight-js-types";
-import { fromHex } from "@midnight-ntwrk/midnight-js-utils";
-import { Contract as BurnLpOrderContract, type Ledger, ledger, type Witnesses as BurnLpOrderWitnesses } from "../../../dist/burnlporder/contract"
-import { ORDER_OWNER_SECRET } from "../Constants";
-import { bytes32, submitUnprovenTx } from "../integ-support";
-import type * as Amm from "./Amm";
+import { dirname } from "node:path"
+import { fileURLToPath } from "node:url"
+import { CompiledContract } from "@midnight-ntwrk/compact-js"
+import type { Contract as CompactContract } from "@midnight-ntwrk/compact-js/effect/Contract"
+import { entryPointHash } from "@midnight-ntwrk/compact-runtime"
+import { ContractAddress } from "@midnight-ntwrk/ledger-v8"
+import {
+  createCircuitCallTxInterface,
+  createUnprovenCallTxFromInitialStates,
+  deployContract,
+  getPublicStates,
+  type ContractProviders,
+} from "@midnight-ntwrk/midnight-js-contracts"
+import { MidnightProviders } from "@midnight-ntwrk/midnight-js-types"
+import { fromHex } from "@midnight-ntwrk/midnight-js-utils"
+import {
+  Contract as BurnLpOrderContract,
+  type Ledger,
+  ledger,
+  type Witnesses as BurnLpOrderWitnesses,
+} from "../../../dist/burnlporder/contract"
+import { ORDER_OWNER_SECRET } from "../Constants"
+import { bytes32, nonceEvolve } from "../integ-support"
+import type * as Amm from "./Amm"
 import * as CircuitId from "./CircuitId"
+import * as CrossContract from "./CrossContract"
 import * as Witnesses from "./Witnesses"
-import { mergeContractCallTxs } from "../merge";
+import { mergeContractCallTxs } from "../merge"
+import { submitUnprovenTx } from "../Providers/MidnightProviders"
 
 export { type Ledger }
 
@@ -22,13 +35,16 @@ type BurnLpOrderInstance = BurnLpOrderContract<undefined, BurnLpOrderWitnesses<u
 export const ReturnKind = {
   X: 0,
   Y: 1,
-} as const;
+} as const
 
 function compile() {
-  const withWitnesses = CompiledContract.withWitnesses(CompiledContract.make("BurnLpOrder", BurnLpOrderContract), {
-    newNonce: Witnesses.newNonce(3_000),
-    ownerSecret: Witnesses.actorSecret(ORDER_OWNER_SECRET),
-  })
+  const withWitnesses = CompiledContract.withWitnesses(
+    CompiledContract.make("BurnLpOrder", BurnLpOrderContract),
+    {
+      newNonce: Witnesses.newNonce(3_000),
+      ownerSecret: Witnesses.actorSecret(ORDER_OWNER_SECRET),
+    },
+  )
 
   return CompiledContract.withCompiledFileAssets(
     withWitnesses,
@@ -42,19 +58,14 @@ type BurnLpOrderProps = {
 
 async function deploy(
   compiled: CompiledContract.CompiledContract<BurnLpOrderContract<any, any>, any, never>,
-  providers: MidnightProviders
+  providers: MidnightProviders,
 ): Promise<ContractAddress> {
-  const deployed = await deployContract(
-    providers as ContractProviders<BurnLpOrderInstance>,
-    {
-      compiledContract: compiled,
-      args: [
-        fromHex(entryPointHash("BurnLpOrderReceiveCoinFromAmm")),
-      ],
-    },
-  );
+  const deployed = await deployContract(providers as ContractProviders<BurnLpOrderInstance>, {
+    compiledContract: compiled,
+    args: [fromHex(entryPointHash("BurnLpOrderReceiveCoinFromAmm"))],
+  })
 
-  return deployed.deployTxData.public.contractAddress;
+  return deployed.deployTxData.public.contractAddress
 }
 
 export async function make(_props: BurnLpOrderProps, providers: MidnightProviders) {
@@ -69,6 +80,11 @@ export async function make(_props: BurnLpOrderProps, providers: MidnightProvider
     undefined,
   )
 
+  const sentCoinNonceAt = async (position: bigint) => {
+    const states = await getPublicStates(providers.publicDataProvider, address)
+    return nonceEvolve(ledger(states.contractState.data).coins.lookup(position).nonce)
+  }
+
   return {
     address,
     open: endpoints.BurnLpOrderOpen,
@@ -78,16 +94,23 @@ export async function make(_props: BurnLpOrderProps, providers: MidnightProvider
       orderKind: number,
       xAmount: bigint,
       yAmount: bigint,
-      opening: bigint,
     ) => {
-      const initialStates = await getPublicStates(providers.publicDataProvider, address);
+      const placeOrder = await amm.placeOrderTx(
+        slot,
+        orderKind,
+        xAmount,
+        yAmount,
+        CircuitId.circuitId(address, "BurnLpOrderReceiveCoinFromAmm"),
+      )
+
+      const initialStates = await getPublicStates(providers.publicDataProvider, address)
       const reserveCall = await createUnprovenCallTxFromInitialStates(
         providers.zkConfigProvider,
         {
           compiledContract: compiled,
           contractAddress: address,
           circuitId: "BurnLpOrderReserveAmmSlot",
-          args: [slot, opening],
+          args: [slot, CrossContract.commOpening(placeOrder)],
           coinPublicKey: providers.walletProvider.getCoinPublicKey(),
           initialContractState: initialStates.contractState,
           initialZswapChainState: initialStates.zswapChainState,
@@ -95,54 +118,23 @@ export async function make(_props: BurnLpOrderProps, providers: MidnightProvider
           initialPrivateState: undefined as CompactContract.PrivateState<BurnLpOrderInstance>,
         },
         providers.walletProvider.getEncryptionPublicKey(),
-      );
-      const placeOrderStates = await getPublicStates(providers.publicDataProvider, amm.address);
-      const placeOrder = await createUnprovenCallTxFromInitialStates(
-        providers.zkConfigProvider,
-        {
-          compiledContract: amm.compiled,
-          contractAddress: amm.address,
-          circuitId: "AmmPlaceOrder",
-          args: [
-            slot,
-            orderKind,
-            xAmount,
-            yAmount,
-            CircuitId.circuitId(address, "BurnLpOrderReceiveCoinFromAmm"),
-          ],
-          coinPublicKey: providers.walletProvider.getCoinPublicKey(),
-          initialContractState: placeOrderStates.contractState,
-          initialZswapChainState: placeOrderStates.zswapChainState,
-          ledgerParameters: placeOrderStates.ledgerParameters,
-          initialPrivateState: undefined,
-        },
-        providers.walletProvider.getEncryptionPublicKey(),
-      );
+      )
 
-      await submitUnprovenTx(
-        providers,
-        mergeContractCallTxs(
-          { callTxData: reserveCall, zswapLocalState: reserveCall.private.nextZswapLocalState },
-          { callTxData: placeOrder, zswapLocalState: placeOrder.private.nextZswapLocalState },
-        ),
-        { tokenKindsToBalance: ["dust"] },
-      );
+      await submitUnprovenTx(providers, mergeContractCallTxs(reserveCall, placeOrder), {
+        tokenKindsToBalance: ["dust"],
+      })
     },
-    sendCoinToAmm: async (
-      amm: Amm.Contract,
-      fundCircuit: Amm.FundCircuit,
-      slot: bigint,
-      opening: bigint,
-      amount: bigint,
-    ) => {
-      const initialStates = await getPublicStates(providers.publicDataProvider, address);
+    sendCoinToAmm: async (amm: Amm.Contract, slot: bigint) => {
+      const fund = await amm.fundOrderTx("AmmFundOrderLp", slot, await sentCoinNonceAt(0n))
+
+      const initialStates = await getPublicStates(providers.publicDataProvider, address)
       const send = await createUnprovenCallTxFromInitialStates(
         providers.zkConfigProvider,
         {
           compiledContract: compiled,
           contractAddress: address,
           circuitId: "BurnLpOrderSendCoinToAmm",
-          args: [opening],
+          args: [CrossContract.commOpening(fund)],
           coinPublicKey: providers.walletProvider.getCoinPublicKey(),
           initialContractState: initialStates.contractState,
           initialZswapChainState: initialStates.zswapChainState,
@@ -150,43 +142,26 @@ export async function make(_props: BurnLpOrderProps, providers: MidnightProvider
           initialPrivateState: undefined as CompactContract.PrivateState<BurnLpOrderInstance>,
         },
         providers.walletProvider.getEncryptionPublicKey(),
-      );
-      const forwarded = send.private.nextZswapLocalState.outputs.find((output) => !output.recipient.is_left && output.coinInfo.value === amount);
-      if (!forwarded) {
-        throw new Error("Missing output: burn forwarded LP");
-      }
+      )
 
-      await submitUnprovenTx(
-        providers,
-        mergeContractCallTxs(
-          { callTxData: send, zswapLocalState: send.private.nextZswapLocalState },
-          await amm.fundOrder(fundCircuit, slot, bytes32(forwarded.coinInfo.nonce)),
-        ),
-        { tokenKindsToBalance: ["dust"] },
-      );
+      await submitUnprovenTx(providers, mergeContractCallTxs(send, fund), {
+        tokenKindsToBalance: ["dust"],
+      })
     },
-    receiveCoinFromAmm: async (
+    receiveXCoinFromAmm: async (
       amm: Amm.Contract,
-      payCircuit: Amm.PayCircuit,
       slot: bigint,
       returnKind: number,
       amount: bigint,
-      opening: bigint,
-      description: string,
     ) => {
-      const pay = await amm.pay(payCircuit, slot, opening);
-      const returned = pay.zswapLocalState.outputs.find((output) => !output.recipient.is_left && output.coinInfo.value === amount);
-      if (!returned) {
-        throw new Error(`Missing output: ${description}`);
-      }
-      const initialStates = await getPublicStates(providers.publicDataProvider, address);
+      const initialStates = await getPublicStates(providers.publicDataProvider, address)
       const receiveCall = await createUnprovenCallTxFromInitialStates(
         providers.zkConfigProvider,
         {
           compiledContract: compiled,
           contractAddress: address,
           circuitId: "BurnLpOrderReceiveCoinFromAmm",
-          args: [returnKind, amount, bytes32(returned.coinInfo.nonce)],
+          args: [returnKind, amount, bytes32(await amm.sentCoinNonceAt(slot * 4n))],
           coinPublicKey: providers.walletProvider.getCoinPublicKey(),
           initialContractState: initialStates.contractState,
           initialZswapChainState: initialStates.zswapChainState,
@@ -194,23 +169,54 @@ export async function make(_props: BurnLpOrderProps, providers: MidnightProvider
           initialPrivateState: undefined as CompactContract.PrivateState<BurnLpOrderInstance>,
         },
         providers.walletProvider.getEncryptionPublicKey(),
-      );
+      )
 
-      await submitUnprovenTx(
-        providers,
-        mergeContractCallTxs(pay, { callTxData: receiveCall, zswapLocalState: receiveCall.private.nextZswapLocalState }),
-        { tokenKindsToBalance: ["dust"] },
-      );
+      const pay = await amm.payTx("AmmPayX", slot, CrossContract.commOpening(receiveCall))
+
+      await submitUnprovenTx(providers, mergeContractCallTxs(pay, receiveCall), {
+        tokenKindsToBalance: ["dust"],
+      })
     },
-    closeX: async (amm: Amm.Contract, slot: bigint, opening: bigint) => {
-      const initialStates = await getPublicStates(providers.publicDataProvider, address);
+    receiveYCoinFromAmm: async (
+      amm: Amm.Contract,
+      slot: bigint,
+      returnKind: number,
+      amount: bigint,
+    ) => {
+      const initialStates = await getPublicStates(providers.publicDataProvider, address)
+      const receiveCall = await createUnprovenCallTxFromInitialStates(
+        providers.zkConfigProvider,
+        {
+          compiledContract: compiled,
+          contractAddress: address,
+          circuitId: "BurnLpOrderReceiveCoinFromAmm",
+          args: [returnKind, amount, bytes32(await amm.sentCoinNonceAt(slot * 4n + 2n))],
+          coinPublicKey: providers.walletProvider.getCoinPublicKey(),
+          initialContractState: initialStates.contractState,
+          initialZswapChainState: initialStates.zswapChainState,
+          ledgerParameters: initialStates.ledgerParameters,
+          initialPrivateState: undefined as CompactContract.PrivateState<BurnLpOrderInstance>,
+        },
+        providers.walletProvider.getEncryptionPublicKey(),
+      )
+
+      const pay = await amm.payTx("AmmPayY", slot, CrossContract.commOpening(receiveCall))
+
+      await submitUnprovenTx(providers, mergeContractCallTxs(pay, receiveCall), {
+        tokenKindsToBalance: ["dust"],
+      })
+    },
+    closeX: async (amm: Amm.Contract, slot: bigint) => {
+      const clearOrder = await amm.clearOrderTx(slot)
+
+      const initialStates = await getPublicStates(providers.publicDataProvider, address)
       const closeCall = await createUnprovenCallTxFromInitialStates(
         providers.zkConfigProvider,
         {
           compiledContract: compiled,
           contractAddress: address,
           circuitId: "BurnLpOrderCloseX",
-          args: [opening],
+          args: [CrossContract.commOpening(clearOrder)],
           coinPublicKey: providers.walletProvider.getCoinPublicKey(),
           initialContractState: initialStates.contractState,
           initialZswapChainState: initialStates.zswapChainState,
@@ -218,23 +224,18 @@ export async function make(_props: BurnLpOrderProps, providers: MidnightProvider
           initialPrivateState: undefined as CompactContract.PrivateState<BurnLpOrderInstance>,
         },
         providers.walletProvider.getEncryptionPublicKey(),
-      );
+      )
 
-      await submitUnprovenTx(
-        providers,
-        mergeContractCallTxs(
-          { callTxData: closeCall, zswapLocalState: closeCall.private.nextZswapLocalState },
-          await amm.clearOrder(slot),
-        ),
-        { tokenKindsToBalance: ["dust"] },
-      );
+      await submitUnprovenTx(providers, mergeContractCallTxs(closeCall, clearOrder), {
+        tokenKindsToBalance: ["dust"],
+      })
     },
     closeY: endpoints.BurnLpOrderCloseY,
     state: async () => {
-      const states = await getPublicStates(providers.publicDataProvider, address);
+      const states = await getPublicStates(providers.publicDataProvider, address)
 
-      return ledger(states.contractState.data);
-    }
+      return ledger(states.contractState.data)
+    },
   }
 }
 
