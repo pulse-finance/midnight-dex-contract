@@ -14,12 +14,17 @@ import {
   Intent,
   MaintenanceUpdate,
   rawTokenType,
+  type FinalizedTransaction,
   signData,
   signingKeyFromBip340,
   Transaction,
   VerifierKeyInsert,
 } from "@midnight-ntwrk/ledger-v8"
-import { makeContractExecutableRuntime, MidnightProviders } from "@midnight-ntwrk/midnight-js-types"
+import {
+  makeContractExecutableRuntime,
+  MidnightProviders,
+  type UnboundTransaction,
+} from "@midnight-ntwrk/midnight-js-types"
 import {
   ContractProviders,
   createCircuitCallTxInterface,
@@ -45,7 +50,14 @@ import * as Witnesses from "./Witnesses"
 export { type Ledger }
 
 type AmmInstance = AmmContract<undefined, AmmWitnesses<undefined>>
-type AmmCircuitId = CompactContract.ProvableCircuitId<AmmInstance>
+type TokenKindsToBalance = "all" | Array<"dust" | "shielded" | "unshielded">
+type WalletProviderWithTokenKindBalancing = MidnightProviders["walletProvider"] & {
+  balanceTx(
+    tx: UnboundTransaction,
+    ttl?: Date,
+    tokenKindsToBalance?: TokenKindsToBalance,
+  ): Promise<FinalizedTransaction>
+}
 
 export type Parameters = Omit<
   Ledger,
@@ -246,13 +258,27 @@ function batchesOf<T>(items: readonly T[], batchSize: number): T[][] {
   return batches
 }
 
+function withDustOnlyWalletBalancing(providers: MidnightProviders): MidnightProviders {
+  const walletProvider = providers.walletProvider as WalletProviderWithTokenKindBalancing
+
+  return {
+    ...providers,
+    walletProvider: {
+      getCoinPublicKey: () => walletProvider.getCoinPublicKey(),
+      getEncryptionPublicKey: () => walletProvider.getEncryptionPublicKey(),
+      balanceTx: (tx, ttl) => walletProvider.balanceTx(tx, ttl, ["dust"]),
+    },
+  }
+}
+
 export async function make(props: AmmProps, providers: MidnightProviders) {
   const compiled = compile()
 
   const address = await deploy(compiled, props, providers)
 
+  const circuitCallProviders = withDustOnlyWalletBalancing(providers)
   const endpoints = createCircuitCallTxInterface<AmmInstance>(
-    providers as ContractProviders<AmmInstance>,
+    circuitCallProviders as ContractProviders<AmmInstance>,
     compiled,
     address,
     undefined,

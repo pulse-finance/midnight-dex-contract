@@ -298,12 +298,20 @@ async function main() {
   console.log("[integ] Sending X coin from MintLpOrder to Amm")
   await mintLpOrder.sendXCoinToAmm(amm, mintSlot)
 
+  console.log("[integ] Sending Y coin from MintLpOrder to Amm")
   await mintLpOrder.sendYCoinToAmm(amm, mintSlot)
 
-  const mintLpOut = calcLpOut(expected, MINT_LP_X_IN, MINT_LP_Y_IN)
+  console.log("[integ] Activating MintLpOrder on Amm")
   await amm.activateOrder(mintSlot)
+
+  console.log("[integ] Validating MintLpOrder on Amm")
+  const mintLpOut = calcLpOut(expected, MINT_LP_X_IN, MINT_LP_Y_IN)
   await amm.validateDepositXYLiq(mintLpOut)
+
+  console.log("[integ] Minting Lp tokens")
   await amm.mintLp()
+
+  console.log("[integ] Sending lp tokens from Amm to MintLpOrder contract")
   await mintLpOrder.receiveFromAmm(amm, mintSlot, BigInt(MarketOrder.ReturnKind.Lp), mintLpOut)
 
   expected = {
@@ -329,6 +337,7 @@ async function main() {
   console.log("[integ] Running burn LP order flow")
   const burnSlot = 2n
   const { xOut: burnXOut, yOut: burnYOut } = calcWithdrawXY(expected, BURN_LP_IN)
+  console.log("[integ] Opening BurnLpOrder")
   await burnLpOrder.open({
     ownerCommitment: computeOwnerCommitment(burnLpOrderModule, burnLpOrder.address),
     amm: amm.circuitIds("AmmFundOrderLp"),
@@ -338,15 +347,35 @@ async function main() {
     yColorReturned: yColor,
     returnsTo: { bytes: walletPublicKey },
   })
+
+  console.log("[integ] Reserving Amm slot for BurnLpOrder")
   await burnLpOrder.reserveAmmSlot(amm, burnSlot, Amm.OrderKind.WithdrawXYLiq, BURN_LP_IN, 0n)
+
+  console.log("[integ] Sending lp tokens to Amm")
   await burnLpOrder.sendCoinToAmm(amm, burnSlot)
+
+  console.log("[integ] Activating burn order on Amm")
   await amm.activateOrder(burnSlot)
+
+  console.log("[integ] Validating burn order on Amm")
   await amm.validateWithdrawXYLiq(burnXOut, burnYOut)
+
+  console.log("[integ] Split x liq to send to order slot")
   await amm.splitX()
+
+  console.log("[integ] Split y liq to send to order slot")
   await amm.splitY()
+
+  console.log("[integ] Send X coin from Amm to BurnLpOrder")
   await burnLpOrder.receiveXCoinFromAmm(amm, burnSlot, BurnLpOrder.ReturnKind.X, burnXOut)
+
+  console.log("[integ] Send Y coin from Amm to BurnLpOrder")
   await burnLpOrder.receiveYCoinFromAmm(amm, burnSlot, BurnLpOrder.ReturnKind.Y, burnYOut)
+
+  console.log("[integ] Closing X on Amm")
   await burnLpOrder.closeX(amm, burnSlot)
+
+  console.log("[integ] Closing Y on Amm")
   await burnLpOrder.closeY()
 
   expected = {

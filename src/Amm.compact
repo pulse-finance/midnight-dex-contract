@@ -401,7 +401,7 @@ export circuit AmmValidateDepositXYLiq(
     assert(order.state == ActiveOrderState.Unvalidated, "Active order already validated");
 
     const xIn = order.fstAmount;
-    const yIn = order.fstAmount;
+    const yIn = order.sndAmount;
 
     // can lpOut simply be calculated from 
     if (xIn * yLiquidity < yIn * xLiquidity) {
@@ -449,7 +449,7 @@ export circuit AmmValidateDepositXLiq(
     const order = activeOrder();
 
     assert(order.kind == AmmOrderKind.DepositXLiq, "Active order isn't a DepositXLiq order");
-    assert(order.state == ActiveOrderState.Validated, "Active order already validated");
+    assert(order.state == ActiveOrderState.Unvalidated, "Active order already validated");
 
     const xIn = order.fstAmount;
 
@@ -517,7 +517,7 @@ export circuit AmmValidateDepositYLiq(
     assert(order.kind == AmmOrderKind.DepositYLiq, "Active order isn't a DepositYLiq order");
     assert(order.state == ActiveOrderState.Unvalidated, "Active order already validated");
 
-    const yIn = order.fstAmount;
+    const yIn = order.sndAmount;
 
     if (feeBps == 0) {
         assert(xFee == 0, "Fee too high");
@@ -856,7 +856,7 @@ export circuit AmmMintLp(): [] {
         (order.kind == AmmOrderKind.DepositYLiq), 
         "Active order isn't a deposit order"
     );
-    assert(order.state != ActiveOrderState.Validated, "Unexpected active order state");
+    assert(order.state == ActiveOrderState.Validated, "Unexpected active order state");
 
     const lpOut = order.fstAmount;
     
@@ -877,10 +877,10 @@ export circuit AmmMintLp(): [] {
 
 /**
  * Ends either a liquidity withdrawal process or a swap process
+ *
+ * This circuit is too have to also call assertBatcherOnly() (it can't be manipulated via the args so it's not security risk)
  */
 export circuit AmmSplitX(): [] {
-    assertOnlyBatcher();
-
     const order = activeOrder();
 
     assert(
@@ -927,10 +927,10 @@ export circuit AmmSplitX(): [] {
 
 /**
  * Ends either a liquidity withdrawal process or a swap process
+ *
+ * This circuit is too have to also call assertBatcherOnly() (it can't be manipulated via the args so it's not security risk)
  */
 export circuit AmmSplitY(): [] {
-    assertOnlyBatcher();
-
     const order = activeOrder();
 
     if (order.kind == AmmOrderKind.WithdrawXYLiq) {

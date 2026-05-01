@@ -583,7 +583,7 @@ describe("AMM assertion failures", () => {
     )
   })
 
-  it("rejects low LP on two-sided deposits when the first amount is reused as Y input", () => {
+  it("rejects a mismatched LP amount on two-sided deposits when Y is the limiting side", () => {
     const simulator = initialized()
     simulator.startDepositXY({ xIn: 200n, yIn: 100n })
     expect(() => simulator.validateDepositXY(101n)).toThrow(/Too little LP tokens minted/)
