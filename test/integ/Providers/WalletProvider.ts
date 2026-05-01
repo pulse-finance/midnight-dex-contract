@@ -17,7 +17,6 @@ export function makeWalletProvider(ctx: Wallet.Context): WalletProvider {
             ttl?: Date,
             tokenKindsToBalance?: TokenKindsToBalance,
         ) {
-            console.log("Balancing tx...")
             const recipe = await ctx.wallet.balanceUnboundTransaction(
                 tx,
                 {

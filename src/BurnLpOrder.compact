@@ -35,7 +35,7 @@ export ledger coins: Map<Uint<8>, QualifiedShieldedCoinInfo>;
 
 ledger receiveCircuitHash: Bytes<32>;
 
-constructor(receiveCircuitHash_: Bytes<32>, atch: Bytes<32>) {
+constructor(receiveCircuitHash_: Bytes<32>) {
     receiveCircuitHash = disclose(receiveCircuitHash_);
 }
 

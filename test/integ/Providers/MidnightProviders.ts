@@ -20,11 +20,3 @@ export function makeMidnightProviders(ctx: Wallet.Context): MidnightProviders {
         midnightProvider: makeMidnightProvider(ctx.wallet)
     };
 }
-
-export function shieldedRecipient(providers: MidnightProviders) {
-  return makeShieldedUserAddress(providers.walletProvider.getCoinPublicKey());
-}
-
-export function ownerPubKey(providers: MidnightProviders) {
-  return { bytes: bytes32(providers.walletProvider.getCoinPublicKey()) };
-}

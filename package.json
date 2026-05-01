@@ -57,6 +57,11 @@
   "pnpm": {
     "overrides": {
       "@midnight-ntwrk/ledger-v8": "8.0.3"
+    },
+    "patchedDependencies": {
+      "@midnight-ntwrk/midnight-js-contracts": "patches/@midnight-ntwrk__midnight-js-contracts.patch",
+      "@midnight-ntwrk/midnight-js-indexer-public-data-provider": "patches/@midnight-ntwrk__midnight-js-indexer-public-data-provider.patch",
+      "@midnight-ntwrk/wallet-sdk-dust-wallet@3.0.0": "patches/@midnight-ntwrk__wallet-sdk-dust-wallet@3.0.0.patch"
     }
   }
 }

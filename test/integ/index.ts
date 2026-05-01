@@ -1,20 +1,13 @@
-import path from "node:path";
-
 import { ContractExecutable, CompiledContract } from "@midnight-ntwrk/compact-js";
 import type { Contract as CompactContract } from "@midnight-ntwrk/compact-js/effect/Contract";
-import { encodeContractAddress, entryPointHash, type ZswapLocalState } from "@midnight-ntwrk/compact-runtime";
+import { encodeContractAddress, type ZswapLocalState } from "@midnight-ntwrk/compact-runtime";
 import {
-  createCircuitCallTxInterface,
   createUnprovenCallTxFromInitialStates,
-  deployContract,
   getPublicStates,
   submitTx,
-  type ContractProviders,
-  type DeployedContract,
   type UnsubmittedCallTxData,
 } from "@midnight-ntwrk/midnight-js-contracts";
 import { makeContractExecutableRuntime, MidnightProviders } from "@midnight-ntwrk/midnight-js-types";
-import { fromHex } from "@midnight-ntwrk/midnight-js-utils";
 import {
   ChargedState,
   communicationCommitmentRandomness,
@@ -26,7 +19,6 @@ import {
   Intent,
   MaintenanceUpdate,
   maxField,
-  rawTokenType,
   signData,
   signingKeyFromBip340,
   Transaction,
@@ -54,50 +46,37 @@ import {
   ZAP_OUT_X_LP_IN,
   ZAP_OUT_Y_LP_IN,
 } from "./Constants";
-import * as Amm from "./Amm";
-import * as BurnLpOrder from "./BurnLpOrder";
-import * as MarketOrder from "./MarketOrder";
-import * as MintLpOrder from "./MintLpOrder";
+import * as Amm from "./Contracts/Amm";
+import * as BurnLpOrder from "./Contracts/BurnLpOrder";
+import * as Faucet from "./Contracts/Faucet";
+import * as MarketOrder from "./Contracts/MarketOrder";
+import * as MintLpOrder from "./Contracts/MintLpOrder";
 import * as Wallet from "./Wallet";
 import {
-  buildCompiledContract,
   bytes32,
   littleEndianHexToField,
+  makeShieldedUserAddress,
   submitUnprovenTx,
 } from "./integ-support";
 import { mergeContractCallTxs, type MergeContractCallTxData } from "./merge";
-import { makeMidnightProviders, ownerPubKey, shieldedRecipient } from "./Providers/MidnightProviders";
+import { makeMidnightProviders } from "./Providers/MidnightProviders";
 
-import * as faucetModule from "../../dist/faucet/contract";
-import * as ammModule from "../../dist/amm/contract";
 import * as mintLpOrderModule from "../../dist/mintlporder/contract";
 import * as burnLpOrderModule from "../../dist/burnlporder/contract";
 import * as marketOrderModule from "../../dist/marketorder/contract";
+import { fromHex } from "@midnight-ntwrk/midnight-js-utils";
 
 type FaucetWitnesses = import("../../dist/faucet/contract/index.js").Witnesses<undefined>;
 type AmmWitnesses = import("../../dist/amm/contract/index.js").Witnesses<undefined>;
-type MintLpOrderWitnesses = import("../../dist/mintlporder/contract/index.js").Witnesses<undefined>;
-type BurnLpOrderWitnesses = import("../../dist/burnlporder/contract/index.js").Witnesses<undefined>;
-type MarketOrderWitnesses = import("../../dist/marketorder/contract/index.js").Witnesses<undefined>;
 
 type FaucetInstance = import("../../dist/faucet/contract/index.js").Contract<undefined, FaucetWitnesses>;
 type AmmInstance = import("../../dist/amm/contract/index.js").Contract<undefined, AmmWitnesses>;
-type MintLpOrderInstance = import("../../dist/mintlporder/contract/index.js").Contract<undefined, MintLpOrderWitnesses>;
-type BurnLpOrderInstance = import("../../dist/burnlporder/contract/index.js").Contract<undefined, BurnLpOrderWitnesses>;
-type MarketOrderInstance = import("../../dist/marketorder/contract/index.js").Contract<undefined, MarketOrderWitnesses>;
 
 type CompiledFor<C extends CompactContract.Any> = CompiledContract.CompiledContract<C, CompactContract.PrivateState<C>, never>;
 type FaucetCompiledContract = CompiledFor<FaucetInstance>;
 type AmmCompiledContract = CompiledFor<AmmInstance>;
-type MintLpOrderCompiledContract = CompiledFor<MintLpOrderInstance>;
-type BurnLpOrderCompiledContract = CompiledFor<BurnLpOrderInstance>;
-type MarketOrderCompiledContract = CompiledFor<MarketOrderInstance>;
 type AmmCircuitId = CompactContract.ProvableCircuitId<AmmInstance>;
 type LocalOutput = ZswapLocalState["outputs"][number];
-
-type TypedModule<C extends CompactContract.Any, W extends object> = {
-  Contract: new (witnesses: W) => C;
-};
 
 type OwnerSecretContext = { privateState: undefined };
 type OwnerSecretWitnesses = {
@@ -113,26 +92,10 @@ type OwnerCommitmentModule = {
 
 type TokenKind = "dust" | "shielded" | "unshielded";
 
-const DIST = path.resolve(process.cwd(), "dist");
-
 function deterministicNonce(index: number): Uint8Array {
   const bytes = new Uint8Array(32);
   bytes[30] = (index >> 8) & 0xff;
   bytes[31] = index & 0xff;
-  return bytes;
-}
-
-function makeNonceWitness(seed: number) {
-  let index = seed;
-  return (context: { privateState: undefined }): [undefined, Uint8Array] => {
-    index += 1;
-    return [context.privateState, deterministicNonce(index)];
-  };
-}
-
-function encodeTokenName(name: string): Uint8Array {
-  const bytes = new Uint8Array(32);
-  bytes.set(new TextEncoder().encode(name).slice(0, bytes.length));
   return bytes;
 }
 
@@ -288,34 +251,6 @@ function findOutput(outputs: readonly LocalOutput[], predicate: (output: LocalOu
   return output;
 }
 
-async function mintShieldedToken(
-  providers: MidnightProviders,
-  compiledContract: FaucetCompiledContract,
-  faucetAddress: string,
-  tokenName: Uint8Array,
-  quantity: bigint,
-  nonce: Uint8Array,
-): Promise<void> {
-  const initialStates = await getPublicStates(providers.publicDataProvider, faucetAddress);
-  const mintCall = await createUnprovenCallTxFromInitialStates(
-    providers.zkConfigProvider,
-    {
-      compiledContract,
-      contractAddress: faucetAddress,
-      circuitId: "FaucetMintShielded",
-      args: [tokenName, quantity, nonce, shieldedRecipient(providers)],
-      coinPublicKey: providers.walletProvider.getCoinPublicKey(),
-      initialContractState: initialStates.contractState,
-      initialZswapChainState: initialStates.zswapChainState,
-      ledgerParameters: initialStates.ledgerParameters,
-      initialPrivateState: undefined as CompactContract.PrivateState<FaucetInstance>,
-    },
-    providers.walletProvider.getEncryptionPublicKey(),
-  );
-
-  await submitUnprovenTx(providers, mintCall.private.unprovenTx);
-}
-
 async function createSimpleCall<C extends CompactContract.Any, PCK extends CompactContract.ProvableCircuitId<C>>(
   providers: MidnightProviders,
   compiledContract: CompiledFor<C>,
@@ -379,132 +314,6 @@ async function submitMerged(
   );
 }
 
-async function deployAmmSplit(
-  providers: MidnightProviders,
-  compiledContract: AmmCompiledContract,
-  xColor: Uint8Array,
-  yColor: Uint8Array,
-) {
-  console.log("[integ] AMM deploy: preparing split deployment");
-  const contractRuntime = makeContractExecutableRuntime(providers.zkConfigProvider, {
-    coinPublicKey: providers.walletProvider.getCoinPublicKey(),
-    signingKey: Buffer.from(AMM_BATCHER_SECRET).toString("hex"),
-  });
-  const contractExec = ContractExecutable.make(compiledContract);
-  const provableCircuitIds = contractExec.getProvableCircuitIds();
-  const firstTxCircuitIds = provableCircuitIds.slice(0, AMM_DEPLOY_CIRCUIT_BATCH_SIZE);
-  const maintenanceCircuitBatches = batchesOf(
-    provableCircuitIds.slice(AMM_DEPLOY_CIRCUIT_BATCH_SIZE),
-    AMM_DEPLOY_CIRCUIT_BATCH_SIZE,
-  );
-  const contractResult = await contractRuntime.runPromise(
-    contractExec.initialize(undefined, AMM_FEE_BPS, shieldedRecipient(providers), xColor, yColor),
-  );
-
-  const fullState = LedgerContractState.deserialize(contractResult.public.contractState.serialize());
-  const deployState = new LedgerContractState();
-  deployState.data = new ChargedState(fullState.data.state);
-  deployState.balance = new Map(fullState.balance);
-  deployState.maintenanceAuthority = new ContractMaintenanceAuthority(
-    [...fullState.maintenanceAuthority.committee],
-    fullState.maintenanceAuthority.threshold,
-    fullState.maintenanceAuthority.counter,
-  );
-
-  const contractDeploy = new ContractDeploy(deployState);
-  const firstBatchVerifierKeyInserts: VerifierKeyInsert[] = [];
-  for (const circuitId of firstTxCircuitIds) {
-    const verifierKey = await providers.zkConfigProvider.getVerifierKey(circuitId);
-    firstBatchVerifierKeyInserts.push(
-      new VerifierKeyInsert(circuitId, new ContractOperationVersionedVerifierKey("v3", verifierKey)),
-    );
-  }
-  const batchSigningKey = signingKeyFromBip340(AMM_BATCHER_SECRET);
-  await submitTx(providers, {
-    unprovenTx: Transaction.fromParts(
-      "undeployed",
-      undefined,
-      undefined,
-      Intent.new(new Date(Date.now() + 60 * 60 * 1000)).addDeploy(contractDeploy),
-    ),
-  });
-
-  const contractAddress: ContractAddress = contractDeploy.address;
-  const maintenanceTxIds: string[] = [];
-  const allMaintenanceBatches: string[][] = [firstTxCircuitIds, ...maintenanceCircuitBatches];
-  console.log(`[integ] AMM deploy: contract address ${contractAddress}`);
-  console.log(`[integ] AMM deploy: ${provableCircuitIds.length} provable circuits total`);
-
-  for (const [batchIndex, circuitBatch] of allMaintenanceBatches.entries()) {
-    const contractState = await providers.publicDataProvider.queryContractState(contractAddress);
-    if (!contractState) {
-      throw new Error(`Missing on-chain contract state for ${contractAddress}`);
-    }
-
-    const verifierKeyInserts: VerifierKeyInsert[] = [];
-    const candidates = batchIndex === 0 ? firstBatchVerifierKeyInserts : [];
-    for (const insert of candidates) {
-      if (contractState.operation(insert.operation) == null) {
-        verifierKeyInserts.push(insert);
-      }
-    }
-    if (batchIndex > 0) {
-      for (const circuitId of circuitBatch) {
-        if (contractState.operation(circuitId) != null) {
-          continue;
-        }
-        const verifierKey = await providers.zkConfigProvider.getVerifierKey(circuitId);
-        verifierKeyInserts.push(
-          new VerifierKeyInsert(circuitId, new ContractOperationVersionedVerifierKey("v3", verifierKey)),
-        );
-      }
-    }
-    if (verifierKeyInserts.length === 0) {
-      continue;
-    }
-
-    const maintenanceUpdate = new MaintenanceUpdate(
-      contractAddress,
-      verifierKeyInserts,
-      contractState.maintenanceAuthority.counter,
-    );
-    const signedMaintenanceUpdate = maintenanceUpdate.addSignature(
-      0n,
-      signData(batchSigningKey, maintenanceUpdate.dataToSign),
-    );
-
-    const finalized = await submitTx(providers, {
-      unprovenTx: Transaction.fromParts(
-        "undeployed",
-        undefined,
-        undefined,
-        Intent.new(new Date(Date.now() + 60 * 60 * 1000)).addMaintenanceUpdate(signedMaintenanceUpdate),
-      ),
-    });
-    maintenanceTxIds.push(finalized.txId);
-    console.log(`[integ] AMM deploy: submitted maintenance batch ${batchIndex + 1}/${allMaintenanceBatches.length}`);
-  }
-
-  return { contractAddress: contractAddress as ContractAddress, maintenanceTxIds };
-}
-
-async function deployContractForTest<C extends CompactContract.Any>(
-  providers: MidnightProviders,
-  compiledContract: CompiledFor<C>,
-  args: CompactContract.InitializeParameters<C>,
-  privateStateId: string,
-): Promise<DeployedContract<C>> {
-  return deployContract(
-    providers as ContractProviders<C>,
-    {
-      compiledContract,
-      args,
-      privateStateId,
-      initialPrivateState: undefined as CompactContract.PrivateState<C>,
-    },
-  );
-}
-
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) {
     throw new Error(message);
@@ -517,109 +326,47 @@ function assertEqual<T>(actual: T, expected: T, message: string): void {
   }
 }
 
-function assertString(value: unknown, message: string): asserts value is string {
-  assert(typeof value === "string" && value.length > 0, message);
-}
-
-function contractAddress(deployed: DeployedContract<CompactContract.Any>, description: string): string {
-  const address = deployed.deployTxData.public.contractAddress as string;
-  assertString(address, `Missing ${description} address`);
-  return address;
-}
-
 async function main() {
   console.log("[integ] Creating genesis wallet");
   const wallet = await Wallet.makeContext(GENESIS_SEED_HEX);
   const providers = makeMidnightProviders(wallet);
-
-  console.log("[integ] Building compiled contracts");
-  const faucetCompiled: FaucetCompiledContract = buildCompiledContract(
-    faucetModule as TypedModule<FaucetInstance, FaucetWitnesses>,
-    path.join(DIST, "faucet"),
-  ) as unknown as FaucetCompiledContract;
-  const ammCompiled: AmmCompiledContract = buildCompiledContract(
-    ammModule as TypedModule<AmmInstance, AmmWitnesses>,
-    path.join(DIST, "amm"),
-    {
-      newNonce: makeNonceWitness(1_000),
-      batcherSecret: (context: { privateState: undefined }) => [context.privateState, AMM_BATCHER_SECRET],
-    },
-  ) as unknown as AmmCompiledContract;
-  const mintLpOrderCompiled: MintLpOrderCompiledContract = buildCompiledContract(
-    mintLpOrderModule as TypedModule<MintLpOrderInstance, MintLpOrderWitnesses>,
-    path.join(DIST, "mintlporder"),
-    {
-      newNonce: makeNonceWitness(2_000),
-      ownerSecret: (context: { privateState: undefined }) => [context.privateState, ORDER_OWNER_SECRET],
-    },
-  ) as unknown as MintLpOrderCompiledContract;
-  const burnLpOrderCompiled: BurnLpOrderCompiledContract = buildCompiledContract(
-    burnLpOrderModule as TypedModule<BurnLpOrderInstance, BurnLpOrderWitnesses>,
-    path.join(DIST, "burnlporder"),
-    {
-      newNonce: makeNonceWitness(3_000),
-      ownerSecret: (context: { privateState: undefined }) => [context.privateState, ORDER_OWNER_SECRET],
-    },
-  ) as unknown as BurnLpOrderCompiledContract;
-  const marketOrderCompiled: MarketOrderCompiledContract = buildCompiledContract(
-    marketOrderModule as TypedModule<MarketOrderInstance, MarketOrderWitnesses>,
-    path.join(DIST, "marketorder"),
-    {
-      newNonce: makeNonceWitness(4_000),
-      ownerSecret: (context: { privateState: undefined }) => [context.privateState, ORDER_OWNER_SECRET],
-    },
-  ) as unknown as MarketOrderCompiledContract;
-
-  console.log("[integ] Verifying AMM circuit coverage");
-  const ammCircuitIds = ContractExecutable.make(ammCompiled).getProvableCircuitIds();
-  assertEqual(ammCircuitIds.length, Amm.Operations.length, "Unexpected AMM circuit count");
-  for (const operation of Amm.Operations) {
-    assert((ammCircuitIds as readonly string[]).includes(operation), `Missing compiled AMM operation ${operation}`);
-  }
-
+  const walletPublicKey = fromHex(providers.walletProvider.getCoinPublicKey())
+  const walletAddress = makeShieldedUserAddress(walletPublicKey);
+  
   console.log("[integ] Deploying faucet");
-  const faucetAddress = contractAddress(await deployContractForTest(providers, faucetCompiled, [], "faucet"), "faucet");
+  const faucet = await Faucet.make(providers);
 
-  console.log("[integ] Minting token supply");
-  const xCoinBefore = await Wallet.coins(wallet);
-  await mintShieldedToken(providers, faucetCompiled, faucetAddress, X_TOKEN_NAME, INITIAL_X_LIQ + MINT_LP_X_IN + SWAP_X_IN + ZAP_IN_X_IN, deterministicNonce(1));
-  const xCoin = await Wallet.waitForNewCoin(wallet, xCoinBefore);
-  const xColor = bytes32(xCoin.coin.type);
-  const yCoinBefore = await Wallet.coins(wallet);
-  await mintShieldedToken(providers, faucetCompiled, faucetAddress, Y_TOKEN_NAME, INITIAL_Y_LIQ + MINT_LP_Y_IN + SWAP_Y_IN + ZAP_IN_Y_IN, deterministicNonce(2));
-  const yCoin = await Wallet.waitForNewCoin(wallet, yCoinBefore);
-  const yColor = bytes32(yCoin.coin.type);
-  assert(!Buffer.from(xColor).equals(Buffer.from(yColor)), "X and Y colors must differ");
+  console.log("[integ] Minting X tokens from faucet");
+  await faucet.mintShielded(
+    X_TOKEN_NAME, 
+    INITIAL_X_LIQ + MINT_LP_X_IN + SWAP_X_IN + ZAP_IN_X_IN, 
+    deterministicNonce(1),
+    walletAddress
+  )
+  const xColor = faucet.color(X_TOKEN_NAME);
+
+  console.log("[integ] Mining Y tokens from faucet");
+  await faucet.mintShielded(
+    Y_TOKEN_NAME, 
+    INITIAL_Y_LIQ + MINT_LP_Y_IN + SWAP_Y_IN + ZAP_IN_Y_IN, 
+    deterministicNonce(2),
+    walletAddress
+  )
+  const yColor = faucet.color(Y_TOKEN_NAME);
 
   console.log("[integ] Deploying AMM");
-  const amm = await deployAmmSplit(providers, ammCompiled, xColor, yColor);
-  assert(amm.maintenanceTxIds.length > 0, "AMM maintenance tx ids should not be empty");
-  const ammAddress = amm.contractAddress;
-  const lpColor = bytes32(rawTokenType(encodeTokenName("Pulse LP Token"), ammAddress));
-  const ammEndpoints = createCircuitCallTxInterface<AmmInstance>(
-    providers as ContractProviders<AmmInstance>,
-    ammCompiled,
-    ammAddress,
-    undefined,
-  );
-
-  const deployedAmmState = await providers.publicDataProvider.queryContractState(ammAddress);
-  assert(deployedAmmState, `Missing AMM state for ${ammAddress}`);
-  for (const operation of Amm.Operations) {
+  const amm = await Amm.make({xColor, yColor, treasury: walletAddress}, providers)
+  const deployedAmmState = await providers.publicDataProvider.queryContractState(amm.address);
+  assert(deployedAmmState, `Missing AMM state for ${amm.address}`);
+  for (const operation of Amm.CircuitNames) {
     assert(deployedAmmState.operation(operation) != null, `Missing AMM operation ${operation}`);
   }
 
   console.log("[integ] Initializing AMM liquidity");
-  const initLpOut = BigInt(Math.floor(Math.sqrt(Number(INITIAL_X_LIQ) * Number(INITIAL_Y_LIQ))));
-  await ammEndpoints.AmmInitXYLiq(
-    INITIAL_X_LIQ,
-    INITIAL_Y_LIQ,
-    initLpOut,
-    shieldedRecipient(providers),
-    deterministicNonce(10),
-  );
+  const initLpOut = Amm.calcInitLpOut(INITIAL_X_LIQ, INITIAL_Y_LIQ);
+  await amm.initXYLiq(INITIAL_X_LIQ, INITIAL_Y_LIQ, initLpOut, walletAddress);
 
-  let ammLedger = await Amm.readState(providers, ammAddress);
+  let ammLedger = await amm.state();
   assertEqual(ammLedger.xLiquidity, INITIAL_X_LIQ, "Unexpected initial X liquidity");
   assertEqual(ammLedger.yLiquidity, INITIAL_Y_LIQ, "Unexpected initial Y liquidity");
   assertEqual(ammLedger.lpCirculatingSupply, initLpOut, "Unexpected initial LP supply");
@@ -632,39 +379,29 @@ async function main() {
     lpCirculatingSupply: 0n,
   }, INITIAL_X_LIQ, INITIAL_Y_LIQ);
 
-  console.log("[integ] Deploying order contracts");
-  const mintOrderAddress = contractAddress(
-    await deployContractForTest(
-      providers,
-      mintLpOrderCompiled,
-      [fromHex(entryPointHash("MintLpOrderReceiveFromAmm"))],
-      "mint-lp-order",
-    ),
-    "mint LP order",
-  );
-  const burnOrderAddress = contractAddress(
-    await deployContractForTest(
-      providers,
-      burnLpOrderCompiled,
-      [fromHex(entryPointHash("BurnLpOrderReceiveCoinFromAmm")), fromHex(entryPointHash("AmmClearOrder"))],
-      "burn-lp-order",
-    ),
-    "burn LP order",
-  );
+  console.log("[integ] Deploying MintLpOrder contract");
+  const mintLpOrder = await MintLpOrder.make({privateStateId: "mint-lp-order-1"}, providers);
 
-  console.log("[integ] Running mint LP order flow");
+  console.log("[integ] Deploying MarketOrder contract");
+  const marketOrder = await MarketOrder.make({privateStateId: "market-order-1"}, providers);
+
+  console.log("[integ] Deploying BurnLpOrder contract");
+  const burnLpOrder = await BurnLpOrder.make({privateStateId: "burn-lp-order-1"}, providers);
+
+  console.log("[integ] Place mint order");
+  await mintLpOrder.open(
+    {
+      ownerCommitment: computeOwnerCommitment(mintLpOrderModule, mintLpOrder.address),
+      amm: amm.circuitIds("AmmFundOrderX", "AmmFundOrderY"),
+      xAmountSent: MINT_LP_X_IN,
+      yAmountSent: MINT_LP_Y_IN,
+      xColorSent: xColor,
+      yColorSent: yColor,
+      colorReturned: amm.lpColor,
+      returnsTo: {bytes: walletPublicKey},
+    }
+  )
   const mintSlot = 1n;
-  await submitCall(providers, mintLpOrderCompiled, mintOrderAddress, "MintLpOrderOpen", [{
-    ownerCommitment: computeOwnerCommitment(mintLpOrderModule, mintOrderAddress),
-    amm: Amm.circuitIds(ammAddress, "AmmFundOrderX", "AmmFundOrderY"),
-    xAmountSent: MINT_LP_X_IN,
-    yAmountSent: MINT_LP_Y_IN,
-    xColorSent: xColor,
-    yColorSent: yColor,
-    colorReturned: lpColor,
-    returnsTo: ownerPubKey(providers),
-  }]);
-
   const mintReserveOpening = littleEndianHexToField(communicationCommitmentRandomnessAsField());
   await submitMerged(
     providers,
@@ -808,15 +545,7 @@ async function main() {
     expectedNext: Amm.Parameters,
   ) {
     console.log(`[integ] Running market order case ${label}`);
-    const marketOrderAddress = contractAddress(
-      await deployContractForTest(
-        providers,
-        marketOrderCompiled,
-        [fromHex(entryPointHash("MarketOrderReceiveCoinFromAmm"))],
-        `market-order-${label}`,
-      ),
-      `${label} market order`,
-    );
+    const marketOrderAddress = await MarketOrder.deploy(providers, marketOrderCompiled, `market-order-${label}`);
     await submitCall(providers, marketOrderCompiled, marketOrderAddress, "MarketOrderOpen", [{
       ownerCommitment: computeOwnerCommitment(marketOrderModule, marketOrderAddress),
       amm: Amm.circuitIds(ammAddress, fundCircuit),

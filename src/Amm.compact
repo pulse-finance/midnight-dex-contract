@@ -93,8 +93,7 @@ export circuit AmmInitXYLiq(
     xIn: Uint<64>,
     yIn: Uint<64>,
     lpOut: Uint<64>,
-    recipient: Either<ZswapCoinPublicKey, ContractAddress>,
-    nonce: Bytes<32>
+    recipient: Either<ZswapCoinPublicKey, ContractAddress>
 ): [] {
     assert(lpCirculatingSupply == 0, "Already initialized");
     assert(lpOut*lpOut <= xIn*yIn, "Too many LP tokens taken");
@@ -106,7 +105,7 @@ export circuit AmmInitXYLiq(
     mintShieldedToken(
         getLPTokenName(),
         disclose(lpOut),
-        disclose(nonce),
+        disclose(newNonce()),
         disclose(recipient)
     );
 
@@ -115,7 +114,7 @@ export circuit AmmInitXYLiq(
     // send the x liquidity to the contract (shielded)
     xLiquidity = disclose(xIn);
     const xCoin = ShieldedCoinInfo{
-        disclose(nonce),
+        disclose(newNonce()),
         xColor,
         xLiquidity
     };
@@ -125,7 +124,7 @@ export circuit AmmInitXYLiq(
     // send the y liquidity to the contract (shielded)
     yLiquidity = disclose(yIn);
     const yCoin = ShieldedCoinInfo{
-        disclose(nonce),
+        disclose(newNonce()),
         yColor,
         yLiquidity
     };

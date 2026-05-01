@@ -1,0 +1,70 @@
+diff --git a/dist/v1/Transacting.js b/dist/v1/Transacting.js
+index 0e142b8a4f1b9eace7f2fd830a2e8cc60f2d197d..0a51ebb6baa358513461d7626ec13166d8f3c60b 100644
+--- a/dist/v1/Transacting.js
++++ b/dist/v1/Transacting.js
+@@ -31,6 +31,36 @@ const distributeFeeAcrossInputs = (inputs, fee) => inputs.reduce(({ result, rema
+     const deduction = remaining >= input.value ? input.value : remaining;
+     return { result: [...result, { ...input, value: deduction }], remaining: remaining - deduction };
+ }, { result: [], remaining: fee }).result;
++function collectIntentSegmentIds(transactions) {
++    const ids = new Set();
++    for (const tx of transactions) {
++        const intents = tx.intents;
++        if (intents) {
++            for (const segId of intents.keys()) {
++                ids.add(segId);
++            }
++        }
++    }
++    return ids;
++}
++function createNonCollidingFeeTx(networkId, intent, usedSegmentIds) {
++    for (let attempt = 0; attempt < 100; attempt++) {
++        const tx = Transaction.fromPartsRandomized(networkId, undefined, undefined, intent);
++        const txIntents = tx.intents;
++        if (!txIntents)
++            return tx;
++        let collision = false;
++        for (const segId of txIntents.keys()) {
++            if (usedSegmentIds.has(segId)) {
++                collision = true;
++                break;
++            }
++        }
++        if (!collision)
++            return tx;
++    }
++    throw new Error('Failed to generate non-colliding segment_id after 100 attempts');
++}
+ export class TransactingCapabilityImplementation {
+     networkId;
+     costParams;
+@@ -149,7 +179,8 @@ export class TransactingCapabilityImplementation {
+         const [spends] = CoreWallet.spendCoins(state, secretKey, recipeInputs, currentTime);
+         const intent = Intent.new(ttl);
+         intent.dustActions = new DustActions(SignatureMarker.signature, ProofMarker.preProof, currentTime, [...spends], []);
+-        const balancingTx = Transaction.fromPartsRandomized(network, undefined, undefined, intent);
++        const usedIds = collectIntentSegmentIds(transactions);
++        const balancingTx = createNonCollidingFeeTx(network, intent, usedIds);
+         // Erase proofs on everything and merge
+         const erasedBalancing = balancingTx.eraseProofs();
+         const mergedTx = transactions.reduce((acc, tx) => acc.merge(tx.eraseProofs()), erasedBalancing);
+@@ -176,7 +207,7 @@ export class TransactingCapabilityImplementation {
+                             value: coin.value,
+                             token: coin.token,
+                         })),
+-                        initialImbalances: CapImbalances.fromEntry('dust', currentFee),
++                        initialImbalances: CapImbalances.fromEntry('dust', currentFee <= 0n ? currentFee : -currentFee),
+                         feeTokenType: 'dust',
+                         transactionCostModel: {
+                             inputFeeOverhead: 0n,
+@@ -220,7 +251,8 @@ export class TransactingCapabilityImplementation {
+                 const intent = Intent.new(ttl);
+                 const [spends, updatedState] = CoreWallet.spendCoins(state, secretKey, recipeInputs, currentTime);
+                 intent.dustActions = new DustActions(SignatureMarker.signature, ProofMarker.preProof, currentTime, [...spends], []);
+-                const feeTransaction = Transaction.fromPartsRandomized(networkId, undefined, undefined, intent);
++                const usedIds = collectIntentSegmentIds(transactions);
++                const feeTransaction = createNonCollidingFeeTx(networkId, intent, usedIds);
+                 return [feeTransaction, updatedState];
+             });
+         }));
