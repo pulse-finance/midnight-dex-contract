@@ -167,7 +167,6 @@ export class AmmSimulator {
                 yIn,
                 lpOut,
                 defaultRecipient,
-                nonce,
             );
 
             this.commit(context);

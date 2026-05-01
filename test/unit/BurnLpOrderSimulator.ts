@@ -71,7 +71,6 @@ export class BurnLpOrderSimulator {
         const { currentContractState, currentPrivateState } = this.contract.initialState(
             createConstructorContext({}, burnLpOwner),
             burnLpReceiveCircuitHash,
-            burnLpAmmTickCircuitHash,
         );
 
         this.currentContractState = currentContractState;

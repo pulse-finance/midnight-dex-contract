@@ -2,20 +2,24 @@ import { equal, ok } from "node:assert"
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CompiledContract, ContractExecutable } from "@midnight-ntwrk/compact-js";
+import type { Contract as CompactContract } from "@midnight-ntwrk/compact-js/effect/Contract";
 import { entryPointHash } from "@midnight-ntwrk/compact-runtime";
 import { ChargedState, ContractAddress, ContractDeploy, ContractMaintenanceAuthority, ContractOperationVersionedVerifierKey, ContractState, Intent, MaintenanceUpdate, rawTokenType, signData, signingKeyFromBip340, Transaction, VerifierKeyInsert } from "@midnight-ntwrk/ledger-v8";
 import { makeContractExecutableRuntime, MidnightProviders } from "@midnight-ntwrk/midnight-js-types";
-import { ContractProviders, createCircuitCallTxInterface, getPublicStates, submitTx } from "@midnight-ntwrk/midnight-js-contracts";
+import { ContractProviders, createCircuitCallTxInterface, createUnprovenCallTxFromInitialStates, getPublicStates, submitTx } from "@midnight-ntwrk/midnight-js-contracts";
 import { Contract as AmmContract, type Ledger, ledger, Witnesses as AmmWitnesses } from "../../../dist/amm/contract"
 import { fromHex } from "@midnight-ntwrk/midnight-js-utils";
 import { AMM_BATCHER_SECRET, AMM_DEPLOY_CIRCUIT_BATCH_SIZE, AMM_FEE_BPS } from "../Constants";
 import * as Addresses from "./Addresses"
+import * as CircuitId from "./CircuitId"
 import * as Tokens from "./Tokens"
 import * as Witnesses from "./Witnesses"
+import type { MergeContractCallTxData } from "../merge";
 
 export { type Ledger }
 
 type AmmInstance = AmmContract<undefined, AmmWitnesses<undefined>>
+type AmmCircuitId = CompactContract.ProvableCircuitId<AmmInstance>;
 
 export type Parameters = Omit<Ledger, "treasury" | "batcherCommitment" | "xColor" | "yColor" | "slots" | "active" | "coins">
 
@@ -74,6 +78,9 @@ export const CircuitNames = [
 ] as const;
 
 export type CircuitName = (typeof CircuitNames) extends ReadonlyArray<infer T> ? T : never 
+export type FundCircuit = "AmmFundOrderX" | "AmmFundOrderY" | "AmmFundOrderLp";
+export type SettleCircuit = "AmmMintLp" | "AmmSplitX" | "AmmSplitY";
+export type PayCircuit = "AmmPayX" | "AmmPayY" | "AmmPayLp";
 
 function compile() {
   const withWitnesses = CompiledContract.withWitnesses(CompiledContract.make("Amm", AmmContract), {
@@ -140,7 +147,7 @@ async function deploy(
   });
 
   const circuitBatches: string[][] = batchesOf(
-    circuitIds.slice(AMM_DEPLOY_CIRCUIT_BATCH_SIZE),
+    circuitIds,
     AMM_DEPLOY_CIRCUIT_BATCH_SIZE,
   );
 
@@ -223,8 +230,15 @@ export async function make(
     undefined,
   );
 
+  const state = async () => {
+    const states = await getPublicStates(providers.publicDataProvider, address);
+
+    return ledger(states.contractState.data);
+  }
+
   return {
     address,
+    compiled,
     circuitIds: (fundOrder: CircuitName, fundOrderAlt: CircuitName = fundOrder): CircuitIds => {
       return {
         address: { bytes: fromHex(address) },
@@ -235,21 +249,105 @@ export async function make(
       };
     },
     lpColor: fromHex(rawTokenType(Tokens.encodeName("Pulse LP Token"), address)),
-    state: async () => {
-      const states = await getPublicStates(providers.publicDataProvider, address);
-
-      return ledger(states.contractState.data);
-    },
+    state,
     initXYLiq: (xLiq: bigint, yLiq: bigint, lpOut: bigint, address: Addresses.Address) => 
       endpoints.AmmInitXYLiq(
         xLiq,
         yLiq,
         lpOut,
         address
-      )
+      ),
+    placeOrder: endpoints.AmmPlaceOrder,
+    fundOrder: async (circuit: FundCircuit, slot: bigint, nonce: Uint8Array) => {
+      const initialStates = await getPublicStates(providers.publicDataProvider, address);
+      const callTxData = await createUnprovenCallTxFromInitialStates(
+        providers.zkConfigProvider,
+        {
+          compiledContract: compiled,
+          contractAddress: address,
+          circuitId: circuit,
+          args: [slot, nonce],
+          coinPublicKey: providers.walletProvider.getCoinPublicKey(),
+          initialContractState: initialStates.contractState,
+          initialZswapChainState: initialStates.zswapChainState,
+          ledgerParameters: initialStates.ledgerParameters,
+          initialPrivateState: undefined as CompactContract.PrivateState<AmmInstance>,
+        },
+        providers.walletProvider.getEncryptionPublicKey(),
+      );
+
+      return {
+        callTxData,
+        zswapLocalState: callTxData.private.nextZswapLocalState,
+      };
+    },
+    activateOrder: endpoints.AmmActivateOrder,
+    validateDepositXYLiq: endpoints.AmmValidateDepositXYLiq,
+    validateWithdrawXYLiq: endpoints.AmmValidateWithdrawXYLiq,
+    validate: <PCK extends AmmCircuitId>(
+      circuit: PCK,
+      args: CompactContract.CircuitParameters<AmmInstance, PCK>,
+    ) => endpoints[circuit](...args),
+    settle: (circuit: SettleCircuit) => {
+      if (circuit === "AmmMintLp") {
+        return endpoints.AmmMintLp();
+      }
+      if (circuit === "AmmSplitX") {
+        return endpoints.AmmSplitX();
+      }
+      return endpoints.AmmSplitY();
+    },
+    pay: async (circuit: PayCircuit, slot: bigint, opening: bigint) => {
+      const initialStates = await getPublicStates(providers.publicDataProvider, address);
+      const callTxData = await createUnprovenCallTxFromInitialStates(
+        providers.zkConfigProvider,
+        {
+          compiledContract: compiled,
+          contractAddress: address,
+          circuitId: circuit,
+          args: [slot, opening],
+          coinPublicKey: providers.walletProvider.getCoinPublicKey(),
+          initialContractState: initialStates.contractState,
+          initialZswapChainState: initialStates.zswapChainState,
+          ledgerParameters: initialStates.ledgerParameters,
+          initialPrivateState: undefined as CompactContract.PrivateState<AmmInstance>,
+        },
+        providers.walletProvider.getEncryptionPublicKey(),
+      );
+
+      return {
+        callTxData,
+        zswapLocalState: callTxData.private.nextZswapLocalState,
+      };
+    },
+    clearOrder: async (slot: bigint): Promise<MergeContractCallTxData<AmmInstance, "AmmClearOrder">> => {
+      const initialStates = await getPublicStates(providers.publicDataProvider, address);
+      const callTxData = await createUnprovenCallTxFromInitialStates(
+        providers.zkConfigProvider,
+        {
+          compiledContract: compiled,
+          contractAddress: address,
+          circuitId: "AmmClearOrder",
+          args: [slot],
+          coinPublicKey: providers.walletProvider.getCoinPublicKey(),
+          initialContractState: initialStates.contractState,
+          initialZswapChainState: initialStates.zswapChainState,
+          ledgerParameters: initialStates.ledgerParameters,
+          initialPrivateState: undefined as CompactContract.PrivateState<AmmInstance>,
+        },
+        providers.walletProvider.getEncryptionPublicKey(),
+      );
+
+      return {
+        callTxData,
+        zswapLocalState: callTxData.private.nextZswapLocalState,
+      };
+    },
   }
 }
 
 export function calcInitLpOut(xLiq: bigint, yLiq: bigint) {
   return BigInt(Math.floor(Math.sqrt(Number(xLiq) * Number(yLiq))));
 }
+
+export type Contract = Awaited<ReturnType<typeof make>>

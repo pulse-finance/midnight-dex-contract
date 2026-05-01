@@ -9,7 +9,7 @@ overrides:
 
 patchedDependencies:
   '@midnight-ntwrk/midnight-js-contracts':
-    hash: 853c21db6e74d059e254c363a950c42bac994b4547926146f0552bc90ec94be0
+    hash: ca305a66a3212dce012ffb6c0ccd32be537985aa74196a4b184e4271cebeea26
     path: patches/@midnight-ntwrk__midnight-js-contracts.patch
   '@midnight-ntwrk/midnight-js-indexer-public-data-provider':
     hash: 138c8c12b899c58e8825279dcb7208785c88bac6e42f6820c4af7177ed50bdd0
@@ -33,7 +33,7 @@ importers:
         version: 8.0.3
       '@midnight-ntwrk/midnight-js-contracts':
         specifier: 4.0.2
-        version: 4.0.2(patch_hash=853c21db6e74d059e254c363a950c42bac994b4547926146f0552bc90ec94be0)
+        version: 4.0.2(patch_hash=ca305a66a3212dce012ffb6c0ccd32be537985aa74196a4b184e4271cebeea26)
       '@midnight-ntwrk/midnight-js-indexer-public-data-provider':
         specifier: 4.0.2
         version: 4.0.2(patch_hash=138c8c12b899c58e8825279dcb7208785c88bac6e42f6820c4af7177ed50bdd0)
@@ -870,7 +870,7 @@ snapshots:
 
   '@midnight-ntwrk/ledger-v8@8.0.3': {}
 
-  '@midnight-ntwrk/midnight-js-contracts@4.0.2(patch_hash=853c21db6e74d059e254c363a950c42bac994b4547926146f0552bc90ec94be0)':
+  '@midnight-ntwrk/midnight-js-contracts@4.0.2(patch_hash=ca305a66a3212dce012ffb6c0ccd32be537985aa74196a4b184e4271cebeea26)':
     dependencies:
       '@midnight-ntwrk/compact-js': 2.5.0
       '@midnight-ntwrk/midnight-js-network-id': 4.0.2
@@ -879,7 +879,7 @@ snapshots:
 
   '@midnight-ntwrk/midnight-js-http-client-proof-provider@4.0.2':
     dependencies:
-      '@midnight-ntwrk/midnight-js-contracts': 4.0.2(patch_hash=853c21db6e74d059e254c363a950c42bac994b4547926146f0552bc90ec94be0)
+      '@midnight-ntwrk/midnight-js-contracts': 4.0.2(patch_hash=ca305a66a3212dce012ffb6c0ccd32be537985aa74196a4b184e4271cebeea26)
       '@midnight-ntwrk/midnight-js-network-id': 4.0.2
       '@midnight-ntwrk/midnight-js-types': 4.0.2
       '@midnight-ntwrk/midnight-js-utils': 4.0.2

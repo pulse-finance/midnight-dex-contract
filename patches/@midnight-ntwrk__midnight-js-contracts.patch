@@ -1,5 +1,5 @@
 diff --git a/dist/call.d.ts b/dist/call.d.ts
-index e0b55b183ade5ad9387cfee97966108bcafd0dc3..0ba89e7fe7fab4df8f922080b46632e0991344e6 100644
+index e0b55b1..84f3038 100644
 --- a/dist/call.d.ts
 +++ b/dist/call.d.ts
 @@ -1,7 +1,7 @@
@@ -23,7 +23,7 @@ index e0b55b183ade5ad9387cfee97966108bcafd0dc3..0ba89e7fe7fab4df8f922080b46632e0
  /**
   * Conditional type that optionally adds the inferred circuit argument types to
 diff --git a/dist/index.cjs b/dist/index.cjs
-index 858686aa81cefdc72e5e38d0417faeba03afb874..3dba6f9ef784d2730da6d1d800e0913405ab39ab 100644
+index 858686a..b28b5e3 100644
 --- a/dist/index.cjs
 +++ b/dist/index.cjs
 @@ -2,8 +2,6 @@
@@ -58,9 +58,11 @@ index 858686aa81cefdc72e5e38d0417faeba03afb874..3dba6f9ef784d2730da6d1d800e09134
      const { compiledContract, contractAddress, coinPublicKey, initialContractState, initialZswapChainState, ledgerParameters } = options;
      midnightJsUtils.assertIsContractAddress(contractAddress);
      midnightJsUtils.assertDefined(compactJs.ContractExecutable.make(options.compiledContract)
-@@ -886,21 +887,24 @@ async function createUnprovenCallTxFromInitialStates(zkConfigProvider, options,
+@@ -885,22 +886,27 @@ async function createUnprovenCallTxFromInitialStates(zkConfigProvider, options,
+     ));
      try {
          const { public: { contractState, partitionedTranscript, publicTranscript }, private: { input, output, privateState, privateTranscriptOutputs, result, zswapLocalState } } = midnightJsTypes.exitResultOrError(exitResult);
++        const communicationCommitmentRand = options.communicationCommitmentRand ?? ledgerV8.communicationCommitmentRandomness();
          return {
 -            public: {
 -                nextContractState: contractState,
@@ -79,7 +81,8 @@ index 858686aa81cefdc72e5e38d0417faeba03afb874..3dba6f9ef784d2730da6d1d800e09134
 +                    nextPrivateState: privateState,
 +                    nextZswapLocalState: zswapLocalState,
 +                    privateTranscriptOutputs,
-+                    unprovenTx: createUnprovenLedgerCallTx(options.circuitId, contractAddress, initialContractState, initialZswapChainState, partitionedTranscript, privateTranscriptOutputs, input, output, zswapLocalState, encryptionPublicKeyForZswapState(zswapLocalState, options.coinPublicKey, walletEncryptionPublicKey), options.communicationCommitmentRand),
++                    communicationCommitmentRand,
++                    unprovenTx: createUnprovenLedgerCallTx(options.circuitId, contractAddress, initialContractState, initialZswapChainState, partitionedTranscript, privateTranscriptOutputs, input, output, zswapLocalState, encryptionPublicKeyForZswapState(zswapLocalState, options.coinPublicKey, walletEncryptionPublicKey), communicationCommitmentRand),
 +                    newCoins: zswapStateToNewCoins(midnightJsUtils.parseCoinPublicKeyToHex(coinPublicKey, midnightJsNetworkId.getNetworkId()), zswapLocalState)
 +                }
              },
@@ -97,7 +100,7 @@ index 858686aa81cefdc72e5e38d0417faeba03afb874..3dba6f9ef784d2730da6d1d800e09134
          };
      }
      catch (error) {
-@@ -915,7 +919,8 @@ const createCallOptions = (callTxOptions, coinPublicKey, ledgerParameters, initi
+@@ -915,7 +921,8 @@ const createCallOptions = (callTxOptions, coinPublicKey, ledgerParameters, initi
      const callOptionsBase = {
          compiledContract: callTxOptions.compiledContract,
          contractAddress: callTxOptions.contractAddress,
@@ -107,7 +110,7 @@ index 858686aa81cefdc72e5e38d0417faeba03afb874..3dba6f9ef784d2730da6d1d800e09134
      };
      const callOptionsWithArguments = 'args' in callTxOptions
          ? {
-@@ -1735,6 +1740,7 @@ exports.createCircuitMaintenanceTxInterfaces = createCircuitMaintenanceTxInterfa
+@@ -1735,6 +1742,7 @@ exports.createCircuitMaintenanceTxInterfaces = createCircuitMaintenanceTxInterfa
  exports.createContractMaintenanceTxInterface = createContractMaintenanceTxInterface;
  exports.createUnprovenCallTx = createUnprovenCallTx;
  exports.createUnprovenCallTxFromInitialStates = createUnprovenCallTxFromInitialStates;
@@ -116,7 +119,7 @@ index 858686aa81cefdc72e5e38d0417faeba03afb874..3dba6f9ef784d2730da6d1d800e09134
  exports.createUnprovenDeployTxFromVerifierKeys = createUnprovenDeployTxFromVerifierKeys;
  exports.deployContract = deployContract;
 diff --git a/dist/index.d.cts b/dist/index.d.cts
-index ec1d319808062649f5669cc0c91861737268771c..ecb4cbd9786857117afa220cc1dc7d36646328d2 100644
+index ec1d319..2bf8094 100644
 --- a/dist/index.d.cts
 +++ b/dist/index.d.cts
 @@ -1,7 +1,7 @@
@@ -139,7 +142,21 @@ index ec1d319808062649f5669cc0c91861737268771c..ecb4cbd9786857117afa220cc1dc7d36
  };
  /**
   * Conditional type that optionally adds the inferred circuit argument types to
-@@ -512,6 +516,12 @@ type ScopedTransactionOptions = {
+@@ -419,7 +423,12 @@ type UnsubmittedCallTxData<C extends Contract$1.Any, PCK extends Contract$1.Prov
+     /**
+      * Private data relevant to this call transaction.
+      */
+-    readonly private: UnsubmittedTxData;
++    readonly private: UnsubmittedTxData & {
++        /**
++         * Communication commitment randomness used for this call.
++         */
++        readonly communicationCommitmentRand: CommunicationCommitmentRand;
++    };
+ };
+ /**
+  * Data for a submitted, finalized call transaction.
+@@ -512,6 +521,12 @@ type ScopedTransactionOptions = {
   */
  declare const withContractScopedTransaction: <C extends Contract.Any, PCK extends Contract.ProvableCircuitId<C> = Contract.ProvableCircuitId<C>>(providers: ContractProviders<C, PCK>, fn: (txCtx: TransactionContext<C, PCK>) => Promise<void>, options?: ScopedTransactionOptions) => Promise<FinalizedCallTxData<C, PCK>>;
  
@@ -152,7 +169,7 @@ index ec1d319808062649f5669cc0c91861737268771c..ecb4cbd9786857117afa220cc1dc7d36
  declare function createUnprovenCallTxFromInitialStates<C extends Contract<undefined>, PCK extends Contract.ProvableCircuitId<C>>(zkConfigProvider: ZKConfigProvider<string>, options: CallOptionsWithProviderDataDependencies<C, PCK>, walletEncryptionPublicKey: EncPublicKey): Promise<UnsubmittedCallTxData<C, PCK>>;
  declare function createUnprovenCallTxFromInitialStates<C extends Contract.Any, PCK extends Contract.ProvableCircuitId<C>>(zkConfigProvider: ZKConfigProvider<string>, options: CallOptionsWithPrivateState<C, PCK>, walletEncryptionPublicKey: EncPublicKey): Promise<UnsubmittedCallTxData<C, PCK>>;
  /**
-@@ -1135,5 +1145,5 @@ contractAddress: ContractAddress$1, circuitId: Contract.ProvableCircuitId<C>) =>
+@@ -1135,5 +1150,5 @@ contractAddress: ContractAddress$1, circuitId: Contract.ProvableCircuitId<C>) =>
  declare const submitReplaceAuthorityTx: <C extends Contract.Any>(providers: ContractProviders, compiledContract: CompiledContract.CompiledContract<C, any>, // eslint-disable-line @typescript-eslint/no-explicit-any
  contractAddress: ContractAddress$1) => (newAuthority: SigningKey$1) => Promise<FinalizedTxData>;
  
@@ -161,7 +178,7 @@ index ec1d319808062649f5669cc0c91861737268771c..ecb4cbd9786857117afa220cc1dc7d36
 +export { CallTxFailedError, ContractTypeError, DeployTxFailedError, IncompleteCallTxPrivateStateConfig, IncompleteFindContractPrivateStateConfig, InsertVerifierKeyTxFailedError, RemoveVerifierKeyTxFailedError, ReplaceMaintenanceAuthorityTxFailedError, TxFailedError, createCallTxOptions, createCircuitCallTxInterface, createCircuitMaintenanceTxInterface, createCircuitMaintenanceTxInterfaces, createContractMaintenanceTxInterface, createUnprovenCallTx, createUnprovenCallTxFromInitialStates, createUnprovenCallTxFromInitialStatesWithZswapLocalState, createUnprovenDeployTx, createUnprovenDeployTxFromVerifierKeys, deployContract, findDeployedContract, getPublicStates, getStates, getUnshieldedBalances, submitCallTx, submitCallTxAsync, submitDeployTx, submitInsertVerifierKeyTx, submitRemoveVerifierKeyTx, submitReplaceAuthorityTx, submitTx, submitTxAsync, verifierKeysEqual, verifyContractState, withContractScopedTransaction };
 +export type { CallOptions, CallOptionsBase, CallOptionsProviderDataDependencies, CallOptionsWithArguments, CallOptionsWithPrivateState, CallOptionsWithProviderDataDependencies, CallResult, CallResultPrivate, CallResultPublic, CallTxOptions, CallTxOptionsBase, CallTxOptionsWithPrivateStateId, CircuitCallTxInterface, CircuitMaintenanceTxInterface, CircuitMaintenanceTxInterfaces, ContractConstructorOptions, ContractConstructorOptionsBase, ContractConstructorOptionsProviderDataDependencies, ContractConstructorOptionsWithArguments, ContractConstructorOptionsWithPrivateState, ContractConstructorOptionsWithProviderDataDependencies, ContractConstructorResult, ContractMaintenanceTxInterface, ContractProviders, ContractStates, DeployContractOptions, DeployContractOptionsBase, DeployContractOptionsWithPrivateState, DeployTxOptions, DeployTxOptionsBase, DeployTxOptionsWithPrivateState, DeployTxOptionsWithPrivateStateId, DeployedContract, FinalizedCallTxData, FinalizedDeployTxData, FinalizedDeployTxDataBase, FindDeployedContractOptions, FindDeployedContractOptionsBase, FindDeployedContractOptionsExistingPrivateState, FindDeployedContractOptionsStorePrivateState, FoundContract, PublicContractStates, ScopedTransactionOptions, SubmitTxOptions, SubmitTxProviders, SubmittedCallTx, TransactionContext, UnprovenCallTxProvidersBase, UnprovenCallTxProvidersWithPrivateState, UnprovenDeployTxOptions, UnprovenDeployTxProviders, UnsubmittedCallTxData, UnsubmittedCallTxDataWithZswapLocalState, UnsubmittedDeployTxData, UnsubmittedDeployTxDataBase, UnsubmittedDeployTxPrivateData, UnsubmittedDeployTxPublicData, UnsubmittedTxData };
 diff --git a/dist/index.d.mts b/dist/index.d.mts
-index ec1d319808062649f5669cc0c91861737268771c..ecb4cbd9786857117afa220cc1dc7d36646328d2 100644
+index ec1d319..2bf8094 100644
 --- a/dist/index.d.mts
 +++ b/dist/index.d.mts
 @@ -1,7 +1,7 @@
@@ -184,7 +201,21 @@ index ec1d319808062649f5669cc0c91861737268771c..ecb4cbd9786857117afa220cc1dc7d36
  };
  /**
   * Conditional type that optionally adds the inferred circuit argument types to
-@@ -512,6 +516,12 @@ type ScopedTransactionOptions = {
+@@ -419,7 +423,12 @@ type UnsubmittedCallTxData<C extends Contract$1.Any, PCK extends Contract$1.Prov
+     /**
+      * Private data relevant to this call transaction.
+      */
+-    readonly private: UnsubmittedTxData;
++    readonly private: UnsubmittedTxData & {
++        /**
++         * Communication commitment randomness used for this call.
++         */
++        readonly communicationCommitmentRand: CommunicationCommitmentRand;
++    };
+ };
+ /**
+  * Data for a submitted, finalized call transaction.
+@@ -512,6 +521,12 @@ type ScopedTransactionOptions = {
   */
  declare const withContractScopedTransaction: <C extends Contract.Any, PCK extends Contract.ProvableCircuitId<C> = Contract.ProvableCircuitId<C>>(providers: ContractProviders<C, PCK>, fn: (txCtx: TransactionContext<C, PCK>) => Promise<void>, options?: ScopedTransactionOptions) => Promise<FinalizedCallTxData<C, PCK>>;
  
@@ -197,7 +228,7 @@ index ec1d319808062649f5669cc0c91861737268771c..ecb4cbd9786857117afa220cc1dc7d36
  declare function createUnprovenCallTxFromInitialStates<C extends Contract<undefined>, PCK extends Contract.ProvableCircuitId<C>>(zkConfigProvider: ZKConfigProvider<string>, options: CallOptionsWithProviderDataDependencies<C, PCK>, walletEncryptionPublicKey: EncPublicKey): Promise<UnsubmittedCallTxData<C, PCK>>;
  declare function createUnprovenCallTxFromInitialStates<C extends Contract.Any, PCK extends Contract.ProvableCircuitId<C>>(zkConfigProvider: ZKConfigProvider<string>, options: CallOptionsWithPrivateState<C, PCK>, walletEncryptionPublicKey: EncPublicKey): Promise<UnsubmittedCallTxData<C, PCK>>;
  /**
-@@ -1135,5 +1145,5 @@ contractAddress: ContractAddress$1, circuitId: Contract.ProvableCircuitId<C>) =>
+@@ -1135,5 +1150,5 @@ contractAddress: ContractAddress$1, circuitId: Contract.ProvableCircuitId<C>) =>
  declare const submitReplaceAuthorityTx: <C extends Contract.Any>(providers: ContractProviders, compiledContract: CompiledContract.CompiledContract<C, any>, // eslint-disable-line @typescript-eslint/no-explicit-any
  contractAddress: ContractAddress$1) => (newAuthority: SigningKey$1) => Promise<FinalizedTxData>;
  
@@ -206,7 +237,7 @@ index ec1d319808062649f5669cc0c91861737268771c..ecb4cbd9786857117afa220cc1dc7d36
 +export { CallTxFailedError, ContractTypeError, DeployTxFailedError, IncompleteCallTxPrivateStateConfig, IncompleteFindContractPrivateStateConfig, InsertVerifierKeyTxFailedError, RemoveVerifierKeyTxFailedError, ReplaceMaintenanceAuthorityTxFailedError, TxFailedError, createCallTxOptions, createCircuitCallTxInterface, createCircuitMaintenanceTxInterface, createCircuitMaintenanceTxInterfaces, createContractMaintenanceTxInterface, createUnprovenCallTx, createUnprovenCallTxFromInitialStates, createUnprovenCallTxFromInitialStatesWithZswapLocalState, createUnprovenDeployTx, createUnprovenDeployTxFromVerifierKeys, deployContract, findDeployedContract, getPublicStates, getStates, getUnshieldedBalances, submitCallTx, submitCallTxAsync, submitDeployTx, submitInsertVerifierKeyTx, submitRemoveVerifierKeyTx, submitReplaceAuthorityTx, submitTx, submitTxAsync, verifierKeysEqual, verifyContractState, withContractScopedTransaction };
 +export type { CallOptions, CallOptionsBase, CallOptionsProviderDataDependencies, CallOptionsWithArguments, CallOptionsWithPrivateState, CallOptionsWithProviderDataDependencies, CallResult, CallResultPrivate, CallResultPublic, CallTxOptions, CallTxOptionsBase, CallTxOptionsWithPrivateStateId, CircuitCallTxInterface, CircuitMaintenanceTxInterface, CircuitMaintenanceTxInterfaces, ContractConstructorOptions, ContractConstructorOptionsBase, ContractConstructorOptionsProviderDataDependencies, ContractConstructorOptionsWithArguments, ContractConstructorOptionsWithPrivateState, ContractConstructorOptionsWithProviderDataDependencies, ContractConstructorResult, ContractMaintenanceTxInterface, ContractProviders, ContractStates, DeployContractOptions, DeployContractOptionsBase, DeployContractOptionsWithPrivateState, DeployTxOptions, DeployTxOptionsBase, DeployTxOptionsWithPrivateState, DeployTxOptionsWithPrivateStateId, DeployedContract, FinalizedCallTxData, FinalizedDeployTxData, FinalizedDeployTxDataBase, FindDeployedContractOptions, FindDeployedContractOptionsBase, FindDeployedContractOptionsExistingPrivateState, FindDeployedContractOptionsStorePrivateState, FoundContract, PublicContractStates, ScopedTransactionOptions, SubmitTxOptions, SubmitTxProviders, SubmittedCallTx, TransactionContext, UnprovenCallTxProvidersBase, UnprovenCallTxProvidersWithPrivateState, UnprovenDeployTxOptions, UnprovenDeployTxProviders, UnsubmittedCallTxData, UnsubmittedCallTxDataWithZswapLocalState, UnsubmittedDeployTxData, UnsubmittedDeployTxDataBase, UnsubmittedDeployTxPrivateData, UnsubmittedDeployTxPublicData, UnsubmittedTxData };
 diff --git a/dist/index.d.ts b/dist/index.d.ts
-index ec1d319808062649f5669cc0c91861737268771c..ecb4cbd9786857117afa220cc1dc7d36646328d2 100644
+index ec1d319..2bf8094 100644
 --- a/dist/index.d.ts
 +++ b/dist/index.d.ts
 @@ -1,7 +1,7 @@
@@ -229,7 +260,21 @@ index ec1d319808062649f5669cc0c91861737268771c..ecb4cbd9786857117afa220cc1dc7d36
  };
  /**
   * Conditional type that optionally adds the inferred circuit argument types to
-@@ -512,6 +516,12 @@ type ScopedTransactionOptions = {
+@@ -419,7 +423,12 @@ type UnsubmittedCallTxData<C extends Contract$1.Any, PCK extends Contract$1.Prov
+     /**
+      * Private data relevant to this call transaction.
+      */
+-    readonly private: UnsubmittedTxData;
++    readonly private: UnsubmittedTxData & {
++        /**
++         * Communication commitment randomness used for this call.
++         */
++        readonly communicationCommitmentRand: CommunicationCommitmentRand;
++    };
+ };
+ /**
+  * Data for a submitted, finalized call transaction.
+@@ -512,6 +521,12 @@ type ScopedTransactionOptions = {
   */
  declare const withContractScopedTransaction: <C extends Contract.Any, PCK extends Contract.ProvableCircuitId<C> = Contract.ProvableCircuitId<C>>(providers: ContractProviders<C, PCK>, fn: (txCtx: TransactionContext<C, PCK>) => Promise<void>, options?: ScopedTransactionOptions) => Promise<FinalizedCallTxData<C, PCK>>;
  
@@ -242,7 +287,7 @@ index ec1d319808062649f5669cc0c91861737268771c..ecb4cbd9786857117afa220cc1dc7d36
  declare function createUnprovenCallTxFromInitialStates<C extends Contract<undefined>, PCK extends Contract.ProvableCircuitId<C>>(zkConfigProvider: ZKConfigProvider<string>, options: CallOptionsWithProviderDataDependencies<C, PCK>, walletEncryptionPublicKey: EncPublicKey): Promise<UnsubmittedCallTxData<C, PCK>>;
  declare function createUnprovenCallTxFromInitialStates<C extends Contract.Any, PCK extends Contract.ProvableCircuitId<C>>(zkConfigProvider: ZKConfigProvider<string>, options: CallOptionsWithPrivateState<C, PCK>, walletEncryptionPublicKey: EncPublicKey): Promise<UnsubmittedCallTxData<C, PCK>>;
  /**
-@@ -1135,5 +1145,5 @@ contractAddress: ContractAddress$1, circuitId: Contract.ProvableCircuitId<C>) =>
+@@ -1135,5 +1150,5 @@ contractAddress: ContractAddress$1, circuitId: Contract.ProvableCircuitId<C>) =>
  declare const submitReplaceAuthorityTx: <C extends Contract.Any>(providers: ContractProviders, compiledContract: CompiledContract.CompiledContract<C, any>, // eslint-disable-line @typescript-eslint/no-explicit-any
  contractAddress: ContractAddress$1) => (newAuthority: SigningKey$1) => Promise<FinalizedTxData>;
  
@@ -251,7 +296,7 @@ index ec1d319808062649f5669cc0c91861737268771c..ecb4cbd9786857117afa220cc1dc7d36
 +export { CallTxFailedError, ContractTypeError, DeployTxFailedError, IncompleteCallTxPrivateStateConfig, IncompleteFindContractPrivateStateConfig, InsertVerifierKeyTxFailedError, RemoveVerifierKeyTxFailedError, ReplaceMaintenanceAuthorityTxFailedError, TxFailedError, createCallTxOptions, createCircuitCallTxInterface, createCircuitMaintenanceTxInterface, createCircuitMaintenanceTxInterfaces, createContractMaintenanceTxInterface, createUnprovenCallTx, createUnprovenCallTxFromInitialStates, createUnprovenCallTxFromInitialStatesWithZswapLocalState, createUnprovenDeployTx, createUnprovenDeployTxFromVerifierKeys, deployContract, findDeployedContract, getPublicStates, getStates, getUnshieldedBalances, submitCallTx, submitCallTxAsync, submitDeployTx, submitInsertVerifierKeyTx, submitRemoveVerifierKeyTx, submitReplaceAuthorityTx, submitTx, submitTxAsync, verifierKeysEqual, verifyContractState, withContractScopedTransaction };
 +export type { CallOptions, CallOptionsBase, CallOptionsProviderDataDependencies, CallOptionsWithArguments, CallOptionsWithPrivateState, CallOptionsWithProviderDataDependencies, CallResult, CallResultPrivate, CallResultPublic, CallTxOptions, CallTxOptionsBase, CallTxOptionsWithPrivateStateId, CircuitCallTxInterface, CircuitMaintenanceTxInterface, CircuitMaintenanceTxInterfaces, ContractConstructorOptions, ContractConstructorOptionsBase, ContractConstructorOptionsProviderDataDependencies, ContractConstructorOptionsWithArguments, ContractConstructorOptionsWithPrivateState, ContractConstructorOptionsWithProviderDataDependencies, ContractConstructorResult, ContractMaintenanceTxInterface, ContractProviders, ContractStates, DeployContractOptions, DeployContractOptionsBase, DeployContractOptionsWithPrivateState, DeployTxOptions, DeployTxOptionsBase, DeployTxOptionsWithPrivateState, DeployTxOptionsWithPrivateStateId, DeployedContract, FinalizedCallTxData, FinalizedDeployTxData, FinalizedDeployTxDataBase, FindDeployedContractOptions, FindDeployedContractOptionsBase, FindDeployedContractOptionsExistingPrivateState, FindDeployedContractOptionsStorePrivateState, FoundContract, PublicContractStates, ScopedTransactionOptions, SubmitTxOptions, SubmitTxProviders, SubmittedCallTx, TransactionContext, UnprovenCallTxProvidersBase, UnprovenCallTxProvidersWithPrivateState, UnprovenDeployTxOptions, UnprovenDeployTxProviders, UnsubmittedCallTxData, UnsubmittedCallTxDataWithZswapLocalState, UnsubmittedDeployTxData, UnsubmittedDeployTxDataBase, UnsubmittedDeployTxPrivateData, UnsubmittedDeployTxPublicData, UnsubmittedTxData };
 diff --git a/dist/index.mjs b/dist/index.mjs
-index dcc71a88a586db88b504f2a254b0ef222c668882..a9149b53809f3052093c43485cc6ad8a1b9b0a66 100644
+index dcc71a8..c77f1a5 100644
 --- a/dist/index.mjs
 +++ b/dist/index.mjs
 @@ -1,7 +1,5 @@
@@ -285,9 +330,11 @@ index dcc71a88a586db88b504f2a254b0ef222c668882..a9149b53809f3052093c43485cc6ad8a
      const { compiledContract, contractAddress, coinPublicKey, initialContractState, initialZswapChainState, ledgerParameters } = options;
      assertIsContractAddress(contractAddress);
      assertDefined(ContractExecutable.make(options.compiledContract)
-@@ -884,21 +885,24 @@ async function createUnprovenCallTxFromInitialStates(zkConfigProvider, options,
+@@ -883,22 +884,27 @@ async function createUnprovenCallTxFromInitialStates(zkConfigProvider, options,
+     ));
      try {
          const { public: { contractState, partitionedTranscript, publicTranscript }, private: { input, output, privateState, privateTranscriptOutputs, result, zswapLocalState } } = exitResultOrError(exitResult);
++        const communicationCommitmentRand = options.communicationCommitmentRand ?? communicationCommitmentRandomness();
          return {
 -            public: {
 -                nextContractState: contractState,
@@ -306,7 +353,8 @@ index dcc71a88a586db88b504f2a254b0ef222c668882..a9149b53809f3052093c43485cc6ad8a
 +                    nextPrivateState: privateState,
 +                    nextZswapLocalState: zswapLocalState,
 +                    privateTranscriptOutputs,
-+                    unprovenTx: createUnprovenLedgerCallTx(options.circuitId, contractAddress, initialContractState, initialZswapChainState, partitionedTranscript, privateTranscriptOutputs, input, output, zswapLocalState, encryptionPublicKeyForZswapState(zswapLocalState, options.coinPublicKey, walletEncryptionPublicKey), options.communicationCommitmentRand),
++                    communicationCommitmentRand,
++                    unprovenTx: createUnprovenLedgerCallTx(options.circuitId, contractAddress, initialContractState, initialZswapChainState, partitionedTranscript, privateTranscriptOutputs, input, output, zswapLocalState, encryptionPublicKeyForZswapState(zswapLocalState, options.coinPublicKey, walletEncryptionPublicKey), communicationCommitmentRand),
 +                    newCoins: zswapStateToNewCoins(parseCoinPublicKeyToHex(coinPublicKey, getNetworkId()), zswapLocalState)
 +                }
              },
@@ -324,7 +372,7 @@ index dcc71a88a586db88b504f2a254b0ef222c668882..a9149b53809f3052093c43485cc6ad8a
          };
      }
      catch (error) {
-@@ -913,7 +917,8 @@ const createCallOptions = (callTxOptions, coinPublicKey, ledgerParameters, initi
+@@ -913,7 +919,8 @@ const createCallOptions = (callTxOptions, coinPublicKey, ledgerParameters, initi
      const callOptionsBase = {
          compiledContract: callTxOptions.compiledContract,
          contractAddress: callTxOptions.contractAddress,
@@ -334,10 +382,43 @@ index dcc71a88a586db88b504f2a254b0ef222c668882..a9149b53809f3052093c43485cc6ad8a
      };
      const callOptionsWithArguments = 'args' in callTxOptions
          ? {
-@@ -1717,5 +1722,5 @@ const getUnshieldedBalances = async (publicDataProvider, contractAddress) => {
+@@ -1717,5 +1724,5 @@ const getUnshieldedBalances = async (publicDataProvider, contractAddress) => {
      return unshieldedBalances;
  };
  
 -export { CallTxFailedError, ContractTypeError, DeployTxFailedError, IncompleteCallTxPrivateStateConfig, IncompleteFindContractPrivateStateConfig, InsertVerifierKeyTxFailedError, RemoveVerifierKeyTxFailedError, ReplaceMaintenanceAuthorityTxFailedError, TxFailedError, createCallTxOptions, createCircuitCallTxInterface, createCircuitMaintenanceTxInterface, createCircuitMaintenanceTxInterfaces, createContractMaintenanceTxInterface, createUnprovenCallTx, createUnprovenCallTxFromInitialStates, createUnprovenDeployTx, createUnprovenDeployTxFromVerifierKeys, deployContract, findDeployedContract, getPublicStates, getStates, getUnshieldedBalances, submitCallTx, submitCallTxAsync, submitDeployTx, submitInsertVerifierKeyTx, submitRemoveVerifierKeyTx, submitReplaceAuthorityTx, submitTx, submitTxAsync, verifierKeysEqual, verifyContractState, withContractScopedTransaction };
 +export { CallTxFailedError, ContractTypeError, DeployTxFailedError, IncompleteCallTxPrivateStateConfig, IncompleteFindContractPrivateStateConfig, InsertVerifierKeyTxFailedError, RemoveVerifierKeyTxFailedError, ReplaceMaintenanceAuthorityTxFailedError, TxFailedError, createCallTxOptions, createCircuitCallTxInterface, createCircuitMaintenanceTxInterface, createCircuitMaintenanceTxInterfaces, createContractMaintenanceTxInterface, createUnprovenCallTx, createUnprovenCallTxFromInitialStates, createUnprovenCallTxFromInitialStatesWithZswapLocalState, createUnprovenDeployTx, createUnprovenDeployTxFromVerifierKeys, deployContract, findDeployedContract, getPublicStates, getStates, getUnshieldedBalances, submitCallTx, submitCallTxAsync, submitDeployTx, submitInsertVerifierKeyTx, submitRemoveVerifierKeyTx, submitReplaceAuthorityTx, submitTx, submitTxAsync, verifierKeysEqual, verifyContractState, withContractScopedTransaction };
  //# sourceMappingURL=index.mjs.map
+diff --git a/dist/tx-model.d.ts b/dist/tx-model.d.ts
+index e783640..b2b57ab 100644
+--- a/dist/tx-model.d.ts
++++ b/dist/tx-model.d.ts
+@@ -1,6 +1,6 @@
+ import { type Contract } from '@midnight-ntwrk/compact-js';
+ import type { ContractAddress, ContractState, SigningKey, ZswapLocalState } from '@midnight-ntwrk/compact-runtime';
+-import { type ShieldedCoinInfo, type UnprovenTransaction } from '@midnight-ntwrk/ledger-v8';
++import { type CommunicationCommitmentRand, type ShieldedCoinInfo, type UnprovenTransaction } from '@midnight-ntwrk/ledger-v8';
+ import type { FinalizedTxData } from '@midnight-ntwrk/midnight-js-types';
+ import type { CallResult } from './call';
+ /**
+@@ -96,7 +96,12 @@ export type UnsubmittedCallTxData<C extends Contract.Any, PCK extends Contract.P
+     /**
+      * Private data relevant to this call transaction.
+      */
+-    readonly private: UnsubmittedTxData;
++    readonly private: UnsubmittedTxData & {
++        /**
++         * Communication commitment randomness used for this call.
++         */
++        readonly communicationCommitmentRand: CommunicationCommitmentRand;
++    };
+ };
+ /**
+  * Data for a submitted, finalized call transaction.
+@@ -121,4 +126,4 @@ export type SubmittedCallTx<C extends Contract.Any, PCK extends Contract.Provabl
+      */
+     readonly callTxData: UnsubmittedCallTxData<C, PCK>;
+ };
+-//# sourceMappingURL=tx-model.d.ts.map
+\ No newline at end of file
++//# sourceMappingURL=tx-model.d.ts.map

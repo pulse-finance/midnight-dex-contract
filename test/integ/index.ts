@@ -1,34 +1,12 @@
-import { ContractExecutable, CompiledContract } from "@midnight-ntwrk/compact-js";
 import type { Contract as CompactContract } from "@midnight-ntwrk/compact-js/effect/Contract";
-import { encodeContractAddress, type ZswapLocalState } from "@midnight-ntwrk/compact-runtime";
+import { encodeContractAddress } from "@midnight-ntwrk/compact-runtime";
 import {
-  createUnprovenCallTxFromInitialStates,
-  getPublicStates,
-  submitTx,
-  type UnsubmittedCallTxData,
-} from "@midnight-ntwrk/midnight-js-contracts";
-import { makeContractExecutableRuntime, MidnightProviders } from "@midnight-ntwrk/midnight-js-types";
-import {
-  ChargedState,
   communicationCommitmentRandomness,
-  ContractAddress,
-  ContractDeploy,
-  ContractMaintenanceAuthority,
-  ContractOperationVersionedVerifierKey,
-  ContractState as LedgerContractState,
-  Intent,
-  MaintenanceUpdate,
   maxField,
-  signData,
-  signingKeyFromBip340,
-  Transaction,
   type CommunicationCommitmentRand,
-  VerifierKeyInsert,
 } from "@midnight-ntwrk/ledger-v8";
 
 import {
-  AMM_BATCHER_SECRET,
-  AMM_DEPLOY_CIRCUIT_BATCH_SIZE,
   AMM_FEE_BPS,
   BURN_LP_IN,
   GENESIS_SEED_HEX,
@@ -53,12 +31,9 @@ import * as MarketOrder from "./Contracts/MarketOrder";
 import * as MintLpOrder from "./Contracts/MintLpOrder";
 import * as Wallet from "./Wallet";
 import {
-  bytes32,
   littleEndianHexToField,
   makeShieldedUserAddress,
-  submitUnprovenTx,
 } from "./integ-support";
-import { mergeContractCallTxs, type MergeContractCallTxData } from "./merge";
 import { makeMidnightProviders } from "./Providers/MidnightProviders";
 
 import * as mintLpOrderModule from "../../dist/mintlporder/contract";
@@ -66,17 +41,11 @@ import * as burnLpOrderModule from "../../dist/burnlporder/contract";
 import * as marketOrderModule from "../../dist/marketorder/contract";
 import { fromHex } from "@midnight-ntwrk/midnight-js-utils";
 
-type FaucetWitnesses = import("../../dist/faucet/contract/index.js").Witnesses<undefined>;
 type AmmWitnesses = import("../../dist/amm/contract/index.js").Witnesses<undefined>;
 
-type FaucetInstance = import("../../dist/faucet/contract/index.js").Contract<undefined, FaucetWitnesses>;
 type AmmInstance = import("../../dist/amm/contract/index.js").Contract<undefined, AmmWitnesses>;
 
-type CompiledFor<C extends CompactContract.Any> = CompiledContract.CompiledContract<C, CompactContract.PrivateState<C>, never>;
-type FaucetCompiledContract = CompiledFor<FaucetInstance>;
-type AmmCompiledContract = CompiledFor<AmmInstance>;
 type AmmCircuitId = CompactContract.ProvableCircuitId<AmmInstance>;
-type LocalOutput = ZswapLocalState["outputs"][number];
 
 type OwnerSecretContext = { privateState: undefined };
 type OwnerSecretWitnesses = {
@@ -89,8 +58,6 @@ type OwnerCommitmentContract = {
 type OwnerCommitmentModule = {
   Contract: new (witnesses: OwnerSecretWitnesses) => unknown;
 };
-
-type TokenKind = "dust" | "shielded" | "unshielded";
 
 function deterministicNonce(index: number): Uint8Array {
   const bytes = new Uint8Array(32);
@@ -108,14 +75,6 @@ function communicationCommitmentRandomnessAsField(): CommunicationCommitmentRand
   }
 
   throw new Error("Failed to sample communication commitment randomness within field range");
-}
-
-function batchesOf<T>(items: readonly T[], batchSize: number): T[][] {
-  const batches: T[][] = [];
-  for (let index = 0; index < items.length; index += batchSize) {
-    batches.push(items.slice(index, index + batchSize));
-  }
-  return batches;
 }
 
 function calcSwapXToY(state: Pick<Amm.Parameters, "feeBps" | "xLiquidity" | "yLiquidity">, xIn: bigint) {
@@ -243,77 +202,6 @@ function computeOwnerCommitment(contractModule: OwnerCommitmentModule, contractA
   ]);
 }
 
-function findOutput(outputs: readonly LocalOutput[], predicate: (output: LocalOutput) => boolean, description: string): LocalOutput {
-  const output = outputs.find(predicate);
-  if (!output) {
-    throw new Error(`Missing output: ${description}`);
-  }
-  return output;
-}
-
-async function createSimpleCall<C extends CompactContract.Any, PCK extends CompactContract.ProvableCircuitId<C>>(
-  providers: MidnightProviders,
-  compiledContract: CompiledFor<C>,
-  contractAddress: string,
-  circuitId: PCK,
-  args: CompactContract.CircuitParameters<C, PCK>,
-): Promise<UnsubmittedCallTxData<C, PCK>> {
-  const initialStates = await getPublicStates(providers.publicDataProvider, contractAddress);
-  return createUnprovenCallTxFromInitialStates(
-    providers.zkConfigProvider,
-    {
-      compiledContract,
-      contractAddress,
-      circuitId,
-      args,
-      coinPublicKey: providers.walletProvider.getCoinPublicKey(),
-      initialContractState: initialStates.contractState,
-      initialZswapChainState: initialStates.zswapChainState,
-      ledgerParameters: initialStates.ledgerParameters,
-      initialPrivateState: undefined as CompactContract.PrivateState<C>,
-    },
-    providers.walletProvider.getEncryptionPublicKey(),
-  );
-}
-
-async function createLocalStateCall<C extends CompactContract.Any, PCK extends CompactContract.ProvableCircuitId<C>>(
-  providers: MidnightProviders,
-  compiledContract: CompiledFor<C>,
-  contractAddress: string,
-  circuitId: PCK,
-  args: CompactContract.CircuitParameters<C, PCK>,
-): Promise<MergeContractCallTxData<C, PCK>> {
-  const callTxData = await createSimpleCall(providers, compiledContract, contractAddress, circuitId, args);
-  return {
-    callTxData,
-    zswapLocalState: callTxData.private.nextZswapLocalState,
-  };
-}
-
-async function submitCall<C extends CompactContract.Any, PCK extends CompactContract.ProvableCircuitId<C>>(
-  providers: MidnightProviders,
-  compiledContract: CompiledFor<C>,
-  contractAddress: string,
-  circuitId: PCK,
-  args: CompactContract.CircuitParameters<C, PCK>,
-  tokenKindsToBalance?: TokenKind[],
-): Promise<void> {
-  const callTx = await createSimpleCall(providers, compiledContract, contractAddress, circuitId, args);
-  await submitUnprovenTx(providers, callTx.private.unprovenTx, { tokenKindsToBalance });
-}
-
-async function submitMerged(
-  providers: MidnightProviders,
-  first: MergeContractCallTxData,
-  second: MergeContractCallTxData,
-): Promise<void> {
-  await submitUnprovenTx(
-    providers,
-    mergeContractCallTxs(first, second),
-    { tokenKindsToBalance: ["dust"] },
-  );
-}
-
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) {
     throw new Error(message);
@@ -382,9 +270,6 @@ async function main() {
   console.log("[integ] Deploying MintLpOrder contract");
   const mintLpOrder = await MintLpOrder.make({privateStateId: "mint-lp-order-1"}, providers);
 
-  console.log("[integ] Deploying MarketOrder contract");
-  const marketOrder = await MarketOrder.make({privateStateId: "market-order-1"}, providers);
-
   console.log("[integ] Deploying BurnLpOrder contract");
   const burnLpOrder = await BurnLpOrder.make({privateStateId: "burn-lp-order-1"}, providers);
 
@@ -401,50 +286,24 @@ async function main() {
       returnsTo: {bytes: walletPublicKey},
     }
   )
-  const mintSlot = 1n;
-  const mintReserveOpening = littleEndianHexToField(communicationCommitmentRandomnessAsField());
-  await submitMerged(
-    providers,
-    await createLocalStateCall(providers, mintLpOrderCompiled, mintOrderAddress, "MintLpOrderReserveAmmSlot", [mintSlot, mintReserveOpening]),
-    await createLocalStateCall(providers, ammCompiled, ammAddress, "AmmPlaceOrder", [
-      mintSlot,
-      Amm.OrderKind.DepositXYLiq,
-      MINT_LP_X_IN,
-      MINT_LP_Y_IN,
-      Amm.circuitId(mintOrderAddress, "MintLpOrderReceiveFromAmm"),
-    ]),
-  );
 
+  console.log("[integ] Reserve amm slot for mint order")
+  const mintSlot = 1n;
+  await mintLpOrder.reserveAmmSlot(amm, mintSlot, MINT_LP_X_IN, MINT_LP_Y_IN);
+
+  console.log("[integ] Sending X coin from MintLpOrder to Amm")
   const mintXOpening = littleEndianHexToField(communicationCommitmentRandomnessAsField());
-  const mintSendX = await createLocalStateCall(providers, mintLpOrderCompiled, mintOrderAddress, "MintLpOrderSendXCoinToAmm", [mintXOpening]);
-  const mintForwardedX = findOutput(mintSendX.zswapLocalState.outputs, (output) => !output.recipient.is_left && output.coinInfo.value === MINT_LP_X_IN, "mint forwarded X");
-  await submitMerged(
-    providers,
-    mintSendX,
-    await createLocalStateCall(providers, ammCompiled, ammAddress, "AmmFundOrderX", [mintSlot, bytes32(mintForwardedX.coinInfo.nonce)]),
-  );
+  await mintLpOrder.sendXCoinToAmm(amm, mintSlot, mintXOpening, MINT_LP_X_IN);
 
   const mintYOpening = littleEndianHexToField(communicationCommitmentRandomnessAsField());
-  const mintSendY = await createLocalStateCall(providers, mintLpOrderCompiled, mintOrderAddress, "MintLpOrderSendYCoinToAmm", [mintYOpening]);
-  const mintForwardedY = findOutput(mintSendY.zswapLocalState.outputs, (output) => !output.recipient.is_left && output.coinInfo.value === MINT_LP_Y_IN, "mint forwarded Y");
-  await submitMerged(
-    providers,
-    mintSendY,
-    await createLocalStateCall(providers, ammCompiled, ammAddress, "AmmFundOrderY", [mintSlot, bytes32(mintForwardedY.coinInfo.nonce)]),
-  );
+  await mintLpOrder.sendYCoinToAmm(amm, mintSlot, mintYOpening, MINT_LP_Y_IN);
 
   const mintLpOut = calcLpOut(expected, MINT_LP_X_IN, MINT_LP_Y_IN);
-  await submitCall(providers, ammCompiled, ammAddress, "AmmActivateOrder", [mintSlot], ["dust"]);
-  await submitCall(providers, ammCompiled, ammAddress, "AmmValidateDepositXYLiq", [mintLpOut], ["dust"]);
-  await submitCall(providers, ammCompiled, ammAddress, "AmmMintLp", [], ["dust"]);
+  await amm.activateOrder(mintSlot);
+  await amm.validateDepositXYLiq(mintLpOut);
+  await amm.settle("AmmMintLp");
   const mintPayOpening = littleEndianHexToField(communicationCommitmentRandomnessAsField());
-  const mintPay = await createLocalStateCall(providers, ammCompiled, ammAddress, "AmmPayLp", [mintSlot, mintPayOpening]);
-  const mintLpOutput = findOutput(mintPay.zswapLocalState.outputs, (output) => !output.recipient.is_left && output.coinInfo.value === mintLpOut, "mint paid LP");
-  await submitMerged(
-    providers,
-    mintPay,
-    await createLocalStateCall(providers, mintLpOrderCompiled, mintOrderAddress, "MintLpOrderReceiveFromAmm", [BigInt(MarketOrder.ReturnKind.Lp), mintLpOut, bytes32(mintLpOutput.coinInfo.nonce)]),
-  );
+  await mintLpOrder.receiveFromAmm(amm, mintSlot, BigInt(MarketOrder.ReturnKind.Lp), mintLpOut, mintPayOpening);
 
   expected = {
     ...expected,
@@ -452,72 +311,40 @@ async function main() {
     yLiquidity: expected.yLiquidity + MINT_LP_Y_IN,
     lpCirculatingSupply: expected.lpCirculatingSupply + mintLpOut,
   };
-  ammLedger = await Amm.readState(providers, ammAddress);
+  ammLedger = await amm.state();
   assertEqual(ammLedger.xLiquidity, expected.xLiquidity, "Unexpected X liquidity after mint LP");
   assertEqual(ammLedger.yLiquidity, expected.yLiquidity, "Unexpected Y liquidity after mint LP");
   assertEqual(ammLedger.lpCirculatingSupply, expected.lpCirculatingSupply, "Unexpected LP supply after mint LP");
-  assertEqual((await MintLpOrder.readState(providers, mintOrderAddress)).ammSlot, mintSlot, "Mint LP order should retain its AMM slot before close");
+  assertEqual((await mintLpOrder.state()).ammSlot, mintSlot, "Mint LP order should retain its AMM slot before close");
 
   console.log("[integ] Running burn LP order flow");
   const burnSlot = 2n;
   const { xOut: burnXOut, yOut: burnYOut } = calcWithdrawXY(expected, BURN_LP_IN);
-  await submitCall(providers, burnLpOrderCompiled, burnOrderAddress, "BurnLpOrderOpen", [{
-    ownerCommitment: computeOwnerCommitment(burnLpOrderModule, burnOrderAddress),
-    amm: Amm.circuitIds(ammAddress, "AmmFundOrderLp"),
+  await burnLpOrder.open({
+    ownerCommitment: computeOwnerCommitment(burnLpOrderModule, burnLpOrder.address),
+    amm: amm.circuitIds("AmmFundOrderLp"),
     amountSent: BURN_LP_IN,
-    colorSent: lpColor,
+    colorSent: amm.lpColor,
     xColorReturned: xColor,
     yColorReturned: yColor,
-    returnsTo: ownerPubKey(providers),
-  }]);
+    returnsTo: {bytes: walletPublicKey},
+  });
   const burnReserveOpening = littleEndianHexToField(communicationCommitmentRandomnessAsField());
-  await submitMerged(
-    providers,
-    await createLocalStateCall(providers, burnLpOrderCompiled, burnOrderAddress, "BurnLpOrderReserveAmmSlot", [burnSlot, burnReserveOpening]),
-    await createLocalStateCall(providers, ammCompiled, ammAddress, "AmmPlaceOrder", [
-      burnSlot,
-      Amm.OrderKind.WithdrawXYLiq,
-      BURN_LP_IN,
-      0n,
-      Amm.circuitId(burnOrderAddress, "BurnLpOrderReceiveCoinFromAmm"),
-    ]),
-  );
+  await burnLpOrder.reserveAmmSlot(amm, burnSlot, Amm.OrderKind.WithdrawXYLiq, BURN_LP_IN, 0n, burnReserveOpening);
   const burnSendOpening = littleEndianHexToField(communicationCommitmentRandomnessAsField());
-  const burnSend = await createLocalStateCall(providers, burnLpOrderCompiled, burnOrderAddress, "BurnLpOrderSendCoinToAmm", [burnSendOpening]);
-  const burnForwarded = findOutput(burnSend.zswapLocalState.outputs, (output) => !output.recipient.is_left && output.coinInfo.value === BURN_LP_IN, "burn forwarded LP");
-  await submitMerged(
-    providers,
-    burnSend,
-    await createLocalStateCall(providers, ammCompiled, ammAddress, "AmmFundOrderLp", [burnSlot, bytes32(burnForwarded.coinInfo.nonce)]),
-  );
-  await submitCall(providers, ammCompiled, ammAddress, "AmmActivateOrder", [burnSlot], ["dust"]);
-  await submitCall(providers, ammCompiled, ammAddress, "AmmValidateWithdrawXYLiq", [burnXOut, burnYOut], ["dust"]);
-  await submitCall(providers, ammCompiled, ammAddress, "AmmSplitX", [], ["dust"]);
-  await submitCall(providers, ammCompiled, ammAddress, "AmmSplitY", [], ["dust"]);
+  await burnLpOrder.sendCoinToAmm(amm, "AmmFundOrderLp", burnSlot, burnSendOpening, BURN_LP_IN);
+  await amm.activateOrder(burnSlot);
+  await amm.validateWithdrawXYLiq(burnXOut, burnYOut);
+  await amm.settle("AmmSplitX");
+  await amm.settle("AmmSplitY");
   const burnPayXOpening = littleEndianHexToField(communicationCommitmentRandomnessAsField());
-  const burnPayX = await createLocalStateCall(providers, ammCompiled, ammAddress, "AmmPayX", [burnSlot, burnPayXOpening]);
-  const burnXOutput = findOutput(burnPayX.zswapLocalState.outputs, (output) => !output.recipient.is_left && output.coinInfo.value === burnXOut, "burn paid X");
-  await submitMerged(
-    providers,
-    burnPayX,
-    await createLocalStateCall(providers, burnLpOrderCompiled, burnOrderAddress, "BurnLpOrderReceiveCoinFromAmm", [BurnLpOrder.ReturnKind.X, burnXOut, bytes32(burnXOutput.coinInfo.nonce)]),
-  );
+  await burnLpOrder.receiveCoinFromAmm(amm, "AmmPayX", burnSlot, BurnLpOrder.ReturnKind.X, burnXOut, burnPayXOpening, "burn paid X");
   const burnPayYOpening = littleEndianHexToField(communicationCommitmentRandomnessAsField());
-  const burnPayY = await createLocalStateCall(providers, ammCompiled, ammAddress, "AmmPayY", [burnSlot, burnPayYOpening]);
-  const burnYOutput = findOutput(burnPayY.zswapLocalState.outputs, (output) => !output.recipient.is_left && output.coinInfo.value === burnYOut, "burn paid Y");
-  await submitMerged(
-    providers,
-    burnPayY,
-    await createLocalStateCall(providers, burnLpOrderCompiled, burnOrderAddress, "BurnLpOrderReceiveCoinFromAmm", [BurnLpOrder.ReturnKind.Y, burnYOut, bytes32(burnYOutput.coinInfo.nonce)]),
-  );
+  await burnLpOrder.receiveCoinFromAmm(amm, "AmmPayY", burnSlot, BurnLpOrder.ReturnKind.Y, burnYOut, burnPayYOpening, "burn paid Y");
   const burnCloseOpening = littleEndianHexToField(communicationCommitmentRandomnessAsField());
   const coinBeforeBurnClose = await Wallet.coins(wallet);
-  await submitMerged(
-    providers,
-    await createLocalStateCall(providers, burnLpOrderCompiled, burnOrderAddress, "BurnLpOrderCloseX", [burnCloseOpening]),
-    await createLocalStateCall(providers, ammCompiled, ammAddress, "AmmClearOrder", [burnSlot]),
-  );
-  await submitCall(providers, burnLpOrderCompiled, burnOrderAddress, "BurnLpOrderCloseY", [], ["dust"]);
+  await burnLpOrder.closeX(amm, burnSlot, burnCloseOpening);
+  await burnLpOrder.closeY();
   await Wallet.waitForNewCoin(wallet, coinBeforeBurnClose, xColor);
   await Wallet.waitForNewCoin(wallet, coinBeforeBurnClose, yColor);
 
@@ -545,57 +372,38 @@ async function main() {
     expectedNext: Amm.Parameters,
   ) {
     console.log(`[integ] Running market order case ${label}`);
-    const marketOrderAddress = await MarketOrder.deploy(providers, marketOrderCompiled, `market-order-${label}`);
-    await submitCall(providers, marketOrderCompiled, marketOrderAddress, "MarketOrderOpen", [{
-      ownerCommitment: computeOwnerCommitment(marketOrderModule, marketOrderAddress),
-      amm: Amm.circuitIds(ammAddress, fundCircuit),
+    const marketOrder = await MarketOrder.make({privateStateId: `market-order-${label}`}, providers);
+    await marketOrder.open({
+      ownerCommitment: computeOwnerCommitment(marketOrderModule, marketOrder.address),
+      amm: amm.circuitIds(fundCircuit),
       kind: orderKind,
       amountSent: inputAmount,
       colorSent: inputColor,
       colorReturned: returnColor,
-      returnsTo: ownerPubKey(providers),
-    }]);
+      returnsTo: {bytes: walletPublicKey},
+    });
     const reserveOpening = littleEndianHexToField(communicationCommitmentRandomnessAsField());
-    await submitMerged(
-      providers,
-      await createLocalStateCall(providers, marketOrderCompiled, marketOrderAddress, "MarketOrderReserveAmmSlot", [slot, reserveOpening]),
-      await createLocalStateCall(providers, ammCompiled, ammAddress, "AmmPlaceOrder", [
-        slot,
-        orderKind,
-        orderKind === Amm.OrderKind.SwapYToX || orderKind === Amm.OrderKind.DepositYLiq ? 0n : inputAmount,
-        orderKind === Amm.OrderKind.SwapYToX || orderKind === Amm.OrderKind.DepositYLiq ? inputAmount : 0n,
-        Amm.circuitId(marketOrderAddress, "MarketOrderReceiveCoinFromAmm"),
-      ]),
+    await marketOrder.reserveAmmSlot(
+      amm,
+      slot,
+      orderKind,
+      orderKind === Amm.OrderKind.SwapYToX || orderKind === Amm.OrderKind.DepositYLiq ? 0n : inputAmount,
+      orderKind === Amm.OrderKind.SwapYToX || orderKind === Amm.OrderKind.DepositYLiq ? inputAmount : 0n,
+      reserveOpening,
     );
     const fundOpening = littleEndianHexToField(communicationCommitmentRandomnessAsField());
-    const marketSend = await createLocalStateCall(providers, marketOrderCompiled, marketOrderAddress, "MarketOrderSendCoinToAmm", [fundOpening]);
-    const forwarded = findOutput(marketSend.zswapLocalState.outputs, (output) => !output.recipient.is_left && output.coinInfo.value === inputAmount, `${label} forwarded input`);
-    await submitMerged(
-      providers,
-      marketSend,
-      await createLocalStateCall(providers, ammCompiled, ammAddress, fundCircuit, [slot, bytes32(forwarded.coinInfo.nonce)]),
-    );
-    await submitCall(providers, ammCompiled, ammAddress, "AmmActivateOrder", [slot], ["dust"]);
-    await submitCall(providers, ammCompiled, ammAddress, validateCircuit, validateArgs, ["dust"]);
-    await submitCall(providers, ammCompiled, ammAddress, settleCircuit, [], ["dust"]);
+    await marketOrder.sendCoinToAmm(amm, fundCircuit, slot, fundOpening, inputAmount, `${label} forwarded input`);
+    await amm.activateOrder(slot);
+    await amm.validate(validateCircuit, validateArgs);
+    await amm.settle(settleCircuit);
     const payOpening = littleEndianHexToField(communicationCommitmentRandomnessAsField());
-    const pay = await createLocalStateCall(providers, ammCompiled, ammAddress, payCircuit, [slot, payOpening]);
-    const returnedOutput = findOutput(pay.zswapLocalState.outputs, (output) => !output.recipient.is_left && output.coinInfo.value === outputAmount, `${label} paid output`);
-    await submitMerged(
-      providers,
-      pay,
-      await createLocalStateCall(providers, marketOrderCompiled, marketOrderAddress, "MarketOrderReceiveCoinFromAmm", [returnKind, outputAmount, bytes32(returnedOutput.coinInfo.nonce)]),
-    );
+    await marketOrder.receiveCoinFromAmm(amm, payCircuit, slot, returnKind, outputAmount, payOpening, `${label} paid output`);
     const closeOpening = littleEndianHexToField(communicationCommitmentRandomnessAsField());
     const coinBeforeClose = await Wallet.coins(wallet);
-    await submitMerged(
-      providers,
-      await createLocalStateCall(providers, marketOrderCompiled, marketOrderAddress, "MarketOrderClose", [closeOpening]),
-      await createLocalStateCall(providers, ammCompiled, ammAddress, "AmmClearOrder", [slot]),
-    );
+    await marketOrder.close(amm, slot, closeOpening);
     await Wallet.waitForNewCoin(wallet, coinBeforeClose, returnColor);
     expected = expectedNext;
-    assert(!(await MarketOrder.readState(providers, marketOrderAddress)).coins.member(0n), `${label} market order should be closed`);
+    assert(!(await marketOrder.state()).coins.member(0n), `${label} market order should be closed`);
   }
 
   await runMarketOrderCase(
@@ -651,7 +459,7 @@ async function main() {
     xColor,
     Amm.OrderKind.DepositXLiq,
     "AmmFundOrderX",
-    lpColor,
+    amm.lpColor,
     "AmmValidateDepositXLiq",
     [zapInX.xSwap, zapInX.xFee, zapInX.ySwap, zapInX.lpOut],
     "AmmMintLp",
@@ -675,7 +483,7 @@ async function main() {
     yColor,
     Amm.OrderKind.DepositYLiq,
     "AmmFundOrderY",
-    lpColor,
+    amm.lpColor,
     "AmmValidateDepositYLiq",
     [zapInY.ySwap, zapInY.xFee, zapInY.xSwap, zapInY.lpOut],
     "AmmMintLp",
@@ -696,7 +504,7 @@ async function main() {
     "zap-out-x",
     7n,
     ZAP_OUT_X_LP_IN,
-    lpColor,
+    amm.lpColor,
     Amm.OrderKind.WithdrawXLiq,
     "AmmFundOrderLp",
     xColor,
@@ -720,7 +528,7 @@ async function main() {
     "zap-out-y",
     8n,
     ZAP_OUT_Y_LP_IN,
-    lpColor,
+    amm.lpColor,
     Amm.OrderKind.WithdrawYLiq,
     "AmmFundOrderLp",
     yColor,
@@ -740,12 +548,12 @@ async function main() {
   );
 
   console.log("[integ] Verifying final AMM ledger state");
-  ammLedger = await Amm.readState(providers, ammAddress);
+  ammLedger = await amm.state();
   assertEqual(ammLedger.xLiquidity, expected.xLiquidity, "Unexpected final X liquidity");
   assertEqual(ammLedger.yLiquidity, expected.yLiquidity, "Unexpected final Y liquidity");
   assertEqual(ammLedger.lpCirculatingSupply, expected.lpCirculatingSupply, "Unexpected final LP supply");
   assertEqual(ammLedger.xRewards, expected.xRewards, "Unexpected final X rewards");
-  assert(!(await BurnLpOrder.readState(providers, burnOrderAddress)).coins.member(0n), "Burn LP order should be closed");
+  assert(!(await burnLpOrder.state()).coins.member(0n), "Burn LP order should be closed");
   console.log("[integ] Integration flow completed successfully");
 }
 
