@@ -38,7 +38,6 @@ type MintLpOrderProps = {
 
 async function deploy(
   compiled: CompiledContract.CompiledContract<MintLpOrderContract<any, any>, any, never>,
-  {privateStateId}: MintLpOrderProps,
   providers: MidnightProviders
 ): Promise<ContractAddress> {
   const deployed = await deployContract(
@@ -46,24 +45,22 @@ async function deploy(
     {
       compiledContract: compiled,
       args: [fromHex(entryPointHash("MintLpOrderReceiveFromAmm"))],
-      privateStateId,
-      initialPrivateState: undefined,
     },
   );
 
   return deployed.deployTxData.public.contractAddress;
 }
 
-export async function make(props: MintLpOrderProps, providers: MidnightProviders) {
+export async function make(_props: MintLpOrderProps, providers: MidnightProviders) {
   const compiled = compile()
 
-  const address = await deploy(compiled, props, providers);
+  const address = await deploy(compiled, providers);
 
   const endpoints = createCircuitCallTxInterface<MintLpOrderInstance>(
     providers as ContractProviders<MintLpOrderInstance>,
     compiled,
     address,
-    props.privateStateId
+    undefined,
   )
 
   return {

@@ -43,7 +43,6 @@ type MarketOrderProps = {
 
 async function deploy(
   compiled: CompiledContract.CompiledContract<MarketOrderContract<any, any>, any, never>,
-  {privateStateId}: MarketOrderProps,
   providers: MidnightProviders
 ): Promise<ContractAddress> {
   const deployed = await deployContract(
@@ -51,24 +50,22 @@ async function deploy(
     {
       compiledContract: compiled,
       args: [fromHex(entryPointHash("MarketOrderReceiveCoinFromAmm"))],
-      privateStateId,
-      initialPrivateState: undefined,
     },
   );
 
   return deployed.deployTxData.public.contractAddress;
 }
 
-export async function make(props: MarketOrderProps, providers: MidnightProviders) {
+export async function make(_props: MarketOrderProps, providers: MidnightProviders) {
   const compiled = compile()
 
-  const address = await deploy(compiled, props, providers)
+  const address = await deploy(compiled, providers)
 
   const endpoints = createCircuitCallTxInterface<MarketOrderInstance>(
     providers as ContractProviders<MarketOrderInstance>,
     compiled,
     address,
-    props.privateStateId
+    undefined,
   )
 
   return {

@@ -42,7 +42,6 @@ type BurnLpOrderProps = {
 
 async function deploy(
   compiled: CompiledContract.CompiledContract<BurnLpOrderContract<any, any>, any, never>,
-  {privateStateId}: BurnLpOrderProps,
   providers: MidnightProviders
 ): Promise<ContractAddress> {
   const deployed = await deployContract(
@@ -52,24 +51,22 @@ async function deploy(
       args: [
         fromHex(entryPointHash("BurnLpOrderReceiveCoinFromAmm")),
       ],
-      privateStateId,
-      initialPrivateState: undefined,
     },
   );
 
   return deployed.deployTxData.public.contractAddress;
 }
 
-export async function make(props: BurnLpOrderProps, providers: MidnightProviders) {
+export async function make(_props: BurnLpOrderProps, providers: MidnightProviders) {
   const compiled = compile()
 
-  const address = await deploy(compiled, props, providers)
+  const address = await deploy(compiled, providers)
 
   const endpoints = createCircuitCallTxInterface<BurnLpOrderInstance>(
     providers as ContractProviders<BurnLpOrderInstance>,
     compiled,
     address,
-    props.privateStateId
+    undefined,
   )
 
   return {
