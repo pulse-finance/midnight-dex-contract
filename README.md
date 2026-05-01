@@ -52,8 +52,7 @@ The integration test suite in [test/integ.ts](/home/christian/Src/Pulse/midnight
 
 Start the local Docker services first:
 
-1. `cd ../claim-contract-call-tests`
-2. `docker compose -f ./compose.yml up -d`
+1. `docker compose -f ./compose.yml up -d`
 
 Then, from this repository, run the integration test:
 
@@ -61,3 +60,14 @@ Then, from this repository, run the integration test:
 2. `pnpm build`
 3. `bun test ./test/integ.ts`
 
+## Order lifecycle
+
+1. The user places an order in an open `*Order` contract slot (e.g. `MarketOrder`)
+2. The batcher creates an order in an open `Amm` slot
+3. The batcher sends an order coin from the order contract to the order coin slot in the AMM contract
+4. For adding liquidity, the batcher sends a second order coin to the AMM contract, updating an AMM slot
+5. Attackers can also send coins to a given `Amm` slot, but they must be merged
+6. Once all necessary coins are in the contract (according the amounts specified in the order), the coins can be moved into primary merge addresses, and the order can be moved into the active slot (if it's open)
+7. The active slot order is validated
+8. The payout coins are created and moved to the order coin slots, the active slot is freed
+9. The resulting order coin slots are sent to 

@@ -8,81 +8,72 @@ module Common {
         hash: Bytes<32>
     }
 
+    export struct AmmCircuitIds {
+        address: ContractAddress,
+        placeOrder: Bytes<32>,
+        fundOrder: Bytes<32>,
+        fundOrderAlt: Bytes<32>, // ignored by MarketOrder and BurnLpOrder
+        clearOrder: Bytes<32>
+    }
+
     export enum AmmOrderKind {
-        SendX,
-        SendY,
-        MintLp,
-        ValidateSwapXToY,
-        ValidateSwapYToX,
-        ValidateDepositXYLiq,
-        ValidateDepositXLiq,
-        ValidateDepositYLiq,
-        ValidateWithdrawXYLiq,
-        ValidateWithdrawXLiq,
-        ValidateWithdrawYLiq
+        DepositXYLiq,
+        DepositXLiq,
+        DepositYLiq,
+        SwapXToY,
+        SwapYToX,
+        WithdrawXYLiq,
+        WithdrawXLiq,
+        WithdrawYLiq
+    }
+
+    export enum AmmOrderState {
+        Pending,
+        Active,
+        Processed,
+        PaidX,
+        PaidAll
     }
 
     export struct AmmOrder {
         kind: AmmOrderKind,
+        state: AmmOrderState,
         fstAmount: Uint<64>, // primary value
         sndAmount: Uint<64>, // secondary value, usually 0, used when withdrawing both X and Y liquidity
         returnsTo: CircuitId
     }
 
-    export struct MarketOrder {
-        ownerCommitment: Bytes<32>,
-        amountSent: Uint<64>,
-        calls: CircuitId,
-        returnsTo: ZswapCoinPublicKey,
-        colorReturned: Bytes<32>,
-        tickUponSend: Maybe<Uint<64>>,
-    }
-
-    export struct MintLpOrder {
-        ownerCommitment: Bytes<32>,
-        xAmountSent: Uint<64>,
-        yAmountSent: Uint<64>,
-        calls: CircuitId,
-        returnsTo: ZswapCoinPublicKey,
-        colorReturned: Bytes<32>,
-        tickUponSend: Maybe<Uint<64>>,
-    }
-
-    export struct BurnLpOrder {
-        ownerCommitment: Bytes<32>,
-        amountSent: Uint<64>,
-        calls: CircuitId,
-        returnsTo: ZswapCoinPublicKey,
-        xColorReturned: Bytes<32>,
-        yColorReturned: Bytes<32>,
-        tickUponSend: Maybe<Uint<64>>,
-    }
-
     /**
      * Order contracts use this struct to call AMM circuits
      */
-    export struct AmmCallArgs {
-        amount: Uint<64>,
-        nonce: Bytes<32>,
+    export struct AmmPlaceOrderArgs {
+        slot: Uint<14>,
+        kind: AmmOrderKind,
+        fstAmount: Uint<64>,
+        sndAmount: Uint<64>,
         returnsTo: CircuitId
     }
 
-    /**
-     * Mint LP order contracts use this struct to call AMM two-sided deposit circuits
-     */
-    export struct MintLpAmmCallArgs {
-        xIn: Uint<64>,
-        yIn: Uint<64>,
-        xNonce: Bytes<32>,
-        yNonce: Bytes<32>,
-        returnsTo: CircuitId
+    export struct AmmFundOrderArgs {
+        slot: Uint<14>,
+        nonce: Bytes<32>
+    }
+
+    export struct AmmClearOrderArgs {
+        slot: Uint<14>
+    }
+
+    export enum ReturnKind {
+        X,
+        Y,
+        Lp
     }
 
     /**
      * The AMM_sendX, AMM_sendY and AMM_mintLP circuits use this struct to callback to the order contract
      */
     export struct ReturnCallArgs {
-        kind: Uint<8>,
+        kind: ReturnKind,
         amount: Uint<64>,
         nonce: Bytes<32>
     }
@@ -90,4 +81,6 @@ module Common {
     export circuit thisAddress(): Either<ZswapCoinPublicKey, ContractAddress> {
         return right<ZswapCoinPublicKey, ContractAddress>(kernel.self());
     }
+
+    export witness newNonce(): Bytes<32>;
 }

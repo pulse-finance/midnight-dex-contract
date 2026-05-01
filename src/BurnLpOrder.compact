@@ -3,197 +3,263 @@ pragma language_version >= 0.22;
 import CompactStandardLibrary;
 import "./Common";
 
+struct BurnLpOrder {
+    ownerCommitment: Bytes<32>,
+    amm: AmmCircuitIds,
+    amountSent: Uint<64>,
+    colorSent: Bytes<32>,
+    xColorReturned: Bytes<32>,
+    yColorReturned: Bytes<32>,
+    returnsTo: ZswapCoinPublicKey
+}
+
+enum BurnLpOrderState {
+    Empty,
+    Opened,
+    Reserved,
+    Sent,
+    ClosedX
+}
+
 witness ownerSecret(): Bytes<32>;
-witness coinIndex(): Uint<8>;
-witness coinColor(): Bytes<32>;
 
 // This contract stores a single order plus the shielded LP coin deposited for it.
-export ledger slot: Maybe<BurnLpOrder>;
+
+export ledger state: BurnLpOrderState;
+export ledger order: BurnLpOrder;
+export ledger ammSlot: Uint<14>; // 0 when unset
 
 // Before AMM fulfillment, position 0 stores the deposited LP coin.
 // After AMM callbacks, positions 0 and 1 store the returned X and Y coins.
 export ledger coins: Map<Uint<8>, QualifiedShieldedCoinInfo>;
 
 ledger receiveCircuitHash: Bytes<32>;
-ledger ammTickCircuitHash: Bytes<32>;
 
-constructor(rch: Bytes<32>, atch: Bytes<32>) {
-    receiveCircuitHash = disclose(rch);
-    ammTickCircuitHash = disclose(atch);
+constructor(receiveCircuitHash_: Bytes<32>, atch: Bytes<32>) {
+    receiveCircuitHash = disclose(receiveCircuitHash_);
 }
 
-export circuit BurnLpOrderOpen(
-    ownerCommitment: Bytes<32>,
-    amountSent: Uint<64>,
-    colorSent: Bytes<32>,
-    calls: CircuitId,
-    returnsTo: ZswapCoinPublicKey,
-    xColorReturned: Bytes<32>,
-    yColorReturned: Bytes<32>,
-    nonce: Bytes<32>
-): [] {
-    assert(!slot.is_some, "BurnLpOrder slot already occupied");
+export circuit BurnLpOrderOpen(ord_: BurnLpOrder): [] {
+    assert(state == BurnLpOrderState.Empty, "BurnLpOrder already occupied");
+
+    const ord = disclose(ord_);
 
     const coin = ShieldedCoinInfo{
-        disclose(nonce),
-        disclose(colorSent),
-        disclose(amountSent)
+        disclose(newNonce()),
+        ord.colorSent,
+        ord.amountSent
     };
 
     receiveShielded(coin);
+
     coins.insertCoin(0, coin, thisAddress());
 
-    slot = some<BurnLpOrder>(BurnLpOrder{
-        disclose(ownerCommitment),
-        disclose(amountSent),
-        disclose(calls),
-        disclose(returnsTo),
-        disclose(xColorReturned),
-        disclose(yColorReturned),
-        none<Uint<64>>()
-    });
+    state = BurnLpOrderState.Opened;
+    order = ord;
 }
 
-export circuit BurnLpOrderSendToAmm(calleeRnd: Field, ammTick: Uint<64>, ammTickRnd: Field): [] {
-    assert(slot.is_some, "BurnLpOrder slot is empty");
+export circuit BurnLpOrderReserveAmmSlot(
+    slot_: Uint<14>,
+    calleeCommitmentOpening: Field
+): [] {
+    assert(state == BurnLpOrderState.Opened, "Unexpected BurnLpOrder state");
 
-    const order = slot.value;
-
-    const coin: QualifiedShieldedCoinInfo = coins.lookup(0);
-
-    const sendResult = sendShielded(
-        coin,
-        right<ZswapCoinPublicKey, ContractAddress>(order.calls.address),
-        coin.value
-    );
-
-    // no need for "no-change" assertion here, because full value of coin is sent
+    const slot = disclose(slot_);
 
     kernel.claimContractCall(
-        order.calls.address.bytes,
-        order.calls.hash,
-        transientCommit<AmmCallArgs>(
-            AmmCallArgs{
+        order.amm.address.bytes,
+        order.amm.placeOrder,
+        transientCommit<AmmPlaceOrderArgs>(
+            AmmPlaceOrderArgs{
+                slot,
+                AmmOrderKind.WithdrawXYLiq,
                 order.amountSent,
-                sendResult.sent.nonce,
+                0,
                 CircuitId{
                     kernel.self(),
                     receiveCircuitHash
                 }
             },
-            disclose(calleeRnd)
+            disclose(calleeCommitmentOpening)
         )
+    );
+
+    state = BurnLpOrderState.Reserved;
+    ammSlot = slot;
+}
+
+export circuit BurnLpOrderSendCoinToAmm(calleeCommitmentOpening: Field): [] {
+    assert(state == BurnLpOrderState.Reserved, "Unexpected BurnLpOrder state");
+
+    const coin: QualifiedShieldedCoinInfo = coins.lookup(0);
+
+    const sendResult = sendShielded(
+        coin,
+        right<ZswapCoinPublicKey, ContractAddress>(order.amm.address),
+        coin.value
     );
 
     coins.remove(0);
 
     kernel.claimContractCall(
-        order.calls.address.bytes,
-        ammTickCircuitHash,
-        transientCommit<Uint<64>>(
-            ammTick,
-            ammTickRnd
+        order.amm.address.bytes,
+        order.amm.fundOrder,
+        transientCommit<AmmFundOrderArgs>(
+            AmmFundOrderArgs{
+                ammSlot,
+                sendResult.sent.nonce
+            },
+            disclose(calleeCommitmentOpening)
         )
     );
 
-    slot = some<BurnLpOrder>(BurnLpOrder{
-        order.ownerCommitment,
-        order.amountSent,
-        order.calls,
-        order.returnsTo,
-        order.xColorReturned,
-        order.yColorReturned,
-        some<Uint<64>>(disclose(ammTick))
-    });
+    state = BurnLpOrderState.Sent;
 }
 
-export circuit BurnLpOrderReceiveFromAmm(returnKind: Uint<8>, amountReturned: Uint<64>, nonce: Bytes<32>): [] {
-    assert(slot.is_some, "BurnLpOrder slot is empty");
+export circuit BurnLpOrderReceiveCoinFromAmm(returnKind_: ReturnKind, amountReturned: Uint<64>, nonce: Bytes<32>): [] {
+    assert(state == BurnLpOrderState.Sent, "Unexpected BurnLpOrder state");
 
-    const order = slot.value;
-
-    assert(order.tickUponSend.is_some, "BurnLpOrder has not been sent to AMM");
+    const returnKind = disclose(returnKind_);
 
     const coin = ShieldedCoinInfo{
         disclose(nonce),
-        returnColor(disclose(returnKind), order),
+        returnColor(returnKind),
         disclose(amountReturned)
     };
     
     receiveShielded(coin);
 
-    const index = disclose(returnKind);
     const contractAddress = thisAddress();
 
-    if (coins.member(index)) {
-        const existing: QualifiedShieldedCoinInfo = coins.lookup(index);
-        const merged = mergeCoinImmediate(existing, coin);
-        coins.insertCoin(index, merged, contractAddress);
+    if (returnKind == ReturnKind.X) {
+        if (!coins.member(0)) {
+            coins.insertCoin(0, coin, contractAddress);
+        } else {
+            assert(!coins.member(1), "Second pos already occupied");
+            coins.insertCoin(1, coin, contractAddress);
+        }
     } else {
-        coins.insertCoin(index, coin, contractAddress);
+        if (!coins.member(2)) {
+            coins.insertCoin(2, coin, contractAddress);
+        } else {
+            assert(!coins.member(3), "Second pos already occupied");
+            coins.insertCoin(3, coin, contractAddress);
+        }
     }
+}
+
+/**
+ * Only needed if spam has been received
+ */
+export circuit BurnLpOrderMergeCoins(offset_: Uint<7>): [] {
+    const offset = disclose(offset_);
+    
+    const fstPos = offset*2;
+    const sndPos = offset*2+1;
+
+    const fstCoin: QualifiedShieldedCoinInfo = coins.lookup(fstPos);
+    const sndCoin: QualifiedShieldedCoinInfo = coins.lookup(sndPos);
+
+    const mergedCoin = mergeCoin(fstCoin, sndCoin);
+
+    receiveShielded(mergedCoin);
+
+    coins.insertCoin(fstPos, mergedCoin, thisAddress());
+
+    coins.remove(sndPos);
+}
+
+export circuit BurnLpOrderCancel(): [] {
+    assertOnlyOwner();
+
+    assert(state == BurnLpOrderState.Opened, "Unexpected BurnLpOrder state");
+
+    const coin: QualifiedShieldedCoinInfo = coins.lookup(0);
+
+    const sendResult = sendShielded(
+        coin,
+        left<ZswapCoinPublicKey, ContractAddress>(order.returnsTo),
+        coin.value
+    );
+
+    coins.remove(0);
+
+    reset();
 }
 
 /**
  * Used both to cancel and to liquidate after completion
  */
-export circuit BurnLpOrderClose(ammTick: Uint<64>, ammTickRnd: Field): [] {
-    assert(slot.is_some, "BurnLpOrder slot is empty");
+export circuit BurnLpOrderCloseX(calleeCommitmentOpening: Field): [] {
+    assertOnlyOwner();
 
-    const order = slot.value;
+    assert(state == BurnLpOrderState.Sent, "Unexpected BurnLpOrder state");
 
-    assertOnlyOwner(order);
+    kernel.claimContractCall(
+        order.amm.address.bytes,
+        order.amm.clearOrder,
+        transientCommit<AmmClearOrderArgs>(
+            AmmClearOrderArgs{
+                ammSlot
+            },
+            calleeCommitmentOpening
+        )
+    );
 
-    if (order.tickUponSend.is_some) {
-        kernel.claimContractCall(
-            order.calls.address.bytes,
-            ammTickCircuitHash,
-            transientCommit<Uint<64>>(
-                ammTick,
-                ammTickRnd
-            )
-        );
+    assert(!coins.member(1), "Spam coin not merged");
+    assert(!coins.member(3), "Spam coin not merged");
 
-        assert(ammTick > order.tickUponSend.value, "AMM process not complete");
-    }
+    const coin: QualifiedShieldedCoinInfo = coins.lookup(0);
 
-    sendCoinIfPresent(0, order.returnsTo);
+    const sendResult = sendShielded(
+        coin,
+        left<ZswapCoinPublicKey, ContractAddress>(order.returnsTo),
+        coin.value
+    );
 
-    sendCoinIfPresent(1, order.returnsTo);
-    slot = none<BurnLpOrder>();
+    coins.remove(0);
+
+    state = BurnLpOrderState.ClosedX;
 }
 
-circuit returnColor(returnKind: Uint<8>, order: BurnLpOrder): Bytes<32> {
-    if (returnKind == 0) {
+export circuit BurnLpOrderCloseY(): [] {
+    assertOnlyOwner();
+
+    assert(state == BurnLpOrderState.ClosedX, "Unexpected BurnLpOrder state");
+
+    const coin: QualifiedShieldedCoinInfo = coins.lookup(2);
+
+    const sendResult = sendShielded(
+        coin,
+        left<ZswapCoinPublicKey, ContractAddress>(order.returnsTo),
+        coin.value
+    );
+
+    coins.remove(2);
+
+    reset();
+}
+
+circuit returnColor(returnKind: ReturnKind): Bytes<32> {
+    if (returnKind == ReturnKind.X) {
         return order.xColorReturned;
     }
 
-    assert(returnKind == 1, "Unexpected return kind");
+    assert(returnKind == ReturnKind.Y, "Unexpected return kind");
 
     return order.yColorReturned;
 }
 
-circuit sendCoinIfPresent(index: Uint<8>, returnsTo: ZswapCoinPublicKey): [] {
-    if (coins.member(index)) {
-        const coin: QualifiedShieldedCoinInfo = coins.lookup(index);
-
-        const sendResult = sendShielded(
-            coin,
-            left<ZswapCoinPublicKey, ContractAddress>(returnsTo),
-            coin.value
-        );
-
-        // no need for "no-change" assertion here, because full value of coin is sent
-
-        coins.remove(index);
-    }
-}
-
-circuit assertOnlyOwner(order: BurnLpOrder): [] {
+circuit assertOnlyOwner(): [] {
     const contractAddress = kernel.self().bytes;
     const secret = ownerSecret();
 
     const hash = persistentHash<Vector<2, Bytes<32>>>([contractAddress, secret]);
 
     assert(order.ownerCommitment == hash, "Can only be performed by the order owner");
+}
+
+circuit reset(): [] {
+    state = BurnLpOrderState.Empty;
+    order = default<BurnLpOrder>;
 }

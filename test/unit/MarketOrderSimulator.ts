@@ -30,10 +30,14 @@ export const encodedAmmContractAddress = { bytes: encodeContractAddress(ammContr
 export const ownerSecret = new Uint8Array(32).fill(5);
 export const otherSecret = new Uint8Array(32).fill(6);
 export const receiveCircuitHash = hashBytes("MarketOrderReceiveFromAmm");
-export const ammTickCircuitHash = hashBytes("AmmTick");
+export const ammClearOrderCircuitHash = hashBytes("AmmClearOrder");
+export const ammFundOrderXCircuitHash = hashBytes("AmmFundOrderX");
+export const ammFundOrderYCircuitHash = hashBytes("AmmFundOrderY");
+export const ammPlaceOrderCircuitHash = hashBytes("AmmPlaceOrder");
+export const ammTickCircuitHash = ammClearOrderCircuitHash;
 export const ammSwapCircuit = {
     address: encodedAmmContractAddress,
-    hash: hashBytes("AmmSwapXToY"),
+    hash: ammPlaceOrderCircuitHash,
 };
 export const returnColor = new Uint8Array(32).fill(10);
 export const coinColor = new Uint8Array(32).fill(8);
@@ -57,6 +61,7 @@ export class MarketOrderSimulator {
 
     constructor(secret = ownerSecret) {
         this.contract = new Contract({
+            newNonce: (context: { privateState: any }) => [context.privateState, coinNonce],
             ownerSecret: (context: Parameters<Witnesses<any>["ownerSecret"]>[0]) => [context.privateState, secret],
             coinIndex: (context: { privateState: any }) => [context.privateState, this.nextCoinIndex],
             coinColor: (context: { privateState: any }) => [context.privateState, this.nextCoinColor],
@@ -65,7 +70,6 @@ export class MarketOrderSimulator {
         const { currentContractState, currentPrivateState } = this.contract.initialState(
             createConstructorContext({}, owner),
             receiveCircuitHash,
-            ammTickCircuitHash,
         );
 
         this.currentContractState = currentContractState;
@@ -74,6 +78,7 @@ export class MarketOrderSimulator {
 
     static makeContract(secret = ownerSecret) {
         return new Contract({
+            newNonce: (context: { privateState: any }) => [context.privateState, coinNonce],
             ownerSecret: (context: Parameters<Witnesses<any>["ownerSecret"]>[0]) => [context.privateState, secret],
             coinIndex: (context: { privateState: any }) => [context.privateState, 0n],
             coinColor: (context: { privateState: any }) => [context.privateState, returnColor],
@@ -106,13 +111,21 @@ export class MarketOrderSimulator {
             this.makeContext(sender, [
                 this.makeIncomingCoin(colorSent, amount, nonce),
             ]),
-            this.ownerCommitment(),
-            amount,
-            colorSent,
-            calls,
-            returnsTo,
-            colorReturned,
-            nonce,
+            {
+                ownerCommitment: this.ownerCommitment(),
+                amm: {
+                    address: calls.address,
+                    placeOrder: calls.hash,
+                    fundOrder: ammFundOrderXCircuitHash,
+                    fundOrderAlt: ammFundOrderYCircuitHash,
+                    clearOrder: ammClearOrderCircuitHash,
+                },
+                kind: 3,
+                amountSent: amount,
+                colorSent,
+                colorReturned,
+                returnsTo,
+            },
         );
 
         this.commit(result.context);
@@ -120,12 +133,9 @@ export class MarketOrderSimulator {
     }
 
     sendToAmm({ sender = otherUser, calleeRnd = callOpening, ammTick = 0n, ammTickRnd = tickCallOpening } = {}) {
-        const result = this.contract.circuits.MarketOrderSendToAmm(
-            this.makeContext(sender),
-            calleeRnd,
-            ammTick,
-            ammTickRnd,
-        );
+        let result = this.contract.circuits.MarketOrderReserveAmmSlot(this.makeContext(sender), ammTick + 1n, ammTickRnd);
+        this.commit(result.context);
+        result = this.contract.circuits.MarketOrderSendCoinToAmm(this.makeContext(sender), calleeRnd);
 
         this.commit(result.context);
         return result;
@@ -142,11 +152,11 @@ export class MarketOrderSimulator {
         this.nextCoinIndex = coinIndex;
         this.nextCoinColor = color;
 
-        const result = this.contract.circuits.MarketOrderReceiveFromAmm(
+        const result = this.contract.circuits.MarketOrderReceiveCoinFromAmm(
             this.makeContext(sender, [
                 this.makeIncomingCoin(color, amount, nonce),
             ]),
-            returnKind,
+            Number(returnKind),
             amount,
             nonce,
         );
@@ -157,7 +167,7 @@ export class MarketOrderSimulator {
 
     close({ sender = owner, secret = ownerSecret, ammTick = 1n, ammTickRnd = tickCallOpening } = {}) {
         const contract = secret === ownerSecret ? this.contract : MarketOrderSimulator.makeContract(secret);
-        const result = contract.circuits.MarketOrderClose(this.makeContext(sender), ammTick, ammTickRnd);
+        const result = contract.circuits.MarketOrderClose(this.makeContext(sender), ammTickRnd);
 
         this.commit(result.context);
         return result;
@@ -194,4 +204,16 @@ export class MarketOrderSimulator {
         this.currentContractState = context.currentQueryContext.state;
         this.currentPrivateState = context.currentPrivateState;
     }
+}
+
+function makeNonceFromId(id: number) {
+    const nonce = new Uint8Array(32);
+    let value = id;
+
+    for (let i = 31; i >= 0 && value > 0; i -= 1) {
+        nonce[i] = value & 0xff;
+        value >>= 8;
+    }
+
+    return nonce;
 }

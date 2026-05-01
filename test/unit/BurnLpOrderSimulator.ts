@@ -28,10 +28,14 @@ export const encodedBurnLpAmmContractAddress = { bytes: encodeContractAddress(bu
 export const burnLpOwnerSecret = new Uint8Array(32).fill(5);
 export const burnLpOtherSecret = new Uint8Array(32).fill(6);
 export const burnLpReceiveCircuitHash = burnLpHashBytes("BurnLpOrderReceiveFromAmm");
-export const burnLpAmmTickCircuitHash = burnLpHashBytes("AmmTick");
+export const burnLpAmmClearOrderCircuitHash = burnLpHashBytes("AmmClearOrder");
+export const burnLpAmmFundOrderLpCircuitHash = burnLpHashBytes("AmmFundOrderLp");
+export const burnLpAmmFundOrderYCircuitHash = burnLpHashBytes("AmmFundOrderY");
+export const burnLpAmmPlaceOrderCircuitHash = burnLpHashBytes("AmmPlaceOrder");
+export const burnLpAmmTickCircuitHash = burnLpAmmClearOrderCircuitHash;
 export const burnLpAmmCircuit = {
     address: encodedBurnLpAmmContractAddress,
-    hash: burnLpHashBytes("AmmWithdrawXYLiq"),
+    hash: burnLpAmmPlaceOrderCircuitHash,
 };
 export const burnLpColor = new Uint8Array(32).fill(7);
 export const burnLpXReturnColor = new Uint8Array(32).fill(8);
@@ -58,6 +62,7 @@ export class BurnLpOrderSimulator {
 
     constructor(secret = burnLpOwnerSecret) {
         this.contract = new Contract({
+            newNonce: (context: { privateState: any }) => [context.privateState, burnLpNonce],
             ownerSecret: (context: Parameters<Witnesses<any>["ownerSecret"]>[0]) => [context.privateState, secret],
             coinIndex: (context: { privateState: any }) => [context.privateState, this.nextCoinIndex],
             coinColor: (context: { privateState: any }) => [context.privateState, this.nextCoinColor],
@@ -75,6 +80,7 @@ export class BurnLpOrderSimulator {
 
     static makeContract(secret = burnLpOwnerSecret) {
         return new Contract({
+            newNonce: (context: { privateState: any }) => [context.privateState, burnLpNonce],
             ownerSecret: (context: Parameters<Witnesses<any>["ownerSecret"]>[0]) => [context.privateState, secret],
             coinIndex: (context: { privateState: any }) => [context.privateState, 0n],
             coinColor: (context: { privateState: any }) => [context.privateState, burnLpXReturnColor],
@@ -108,14 +114,21 @@ export class BurnLpOrderSimulator {
             this.makeContext(sender, [
                 this.makeIncomingCoin(colorSent, amount, nonce),
             ]),
-            this.ownerCommitment(),
-            amount,
-            colorSent,
-            calls,
-            returnsTo,
-            xColorReturned,
-            yColorReturned,
-            nonce,
+            {
+                ownerCommitment: this.ownerCommitment(),
+                amm: {
+                    address: calls.address,
+                    placeOrder: calls.hash,
+                    fundOrder: burnLpAmmFundOrderLpCircuitHash,
+                    fundOrderAlt: burnLpAmmFundOrderYCircuitHash,
+                    clearOrder: burnLpAmmClearOrderCircuitHash,
+                },
+                amountSent: amount,
+                colorSent,
+                xColorReturned,
+                yColorReturned,
+                returnsTo,
+            },
         );
 
         this.commit(result.context);
@@ -123,12 +136,9 @@ export class BurnLpOrderSimulator {
     }
 
     sendToAmm({ sender = burnLpOtherUser, calleeRnd = burnLpCallOpening, ammTick = 0n, ammTickRnd = burnLpTickCallOpening } = {}) {
-        const result = this.contract.circuits.BurnLpOrderSendToAmm(
-            this.makeContext(sender),
-            calleeRnd,
-            ammTick,
-            ammTickRnd,
-        );
+        let result = this.contract.circuits.BurnLpOrderReserveAmmSlot(this.makeContext(sender), ammTick + 1n, ammTickRnd);
+        this.commit(result.context);
+        result = this.contract.circuits.BurnLpOrderSendCoinToAmm(this.makeContext(sender), calleeRnd);
 
         this.commit(result.context);
         return result;
@@ -169,7 +179,11 @@ export class BurnLpOrderSimulator {
         const contract = secret === burnLpOwnerSecret
             ? this.contract
             : BurnLpOrderSimulator.makeContract(secret);
-        const result = contract.circuits.BurnLpOrderClose(this.makeContext(sender), ammTick, ammTickRnd);
+        let result = contract.circuits.BurnLpOrderCloseX(this.makeContext(sender), ammTickRnd);
+        this.commit(result.context);
+        if (this.currentLedger().state === 4 && this.currentLedger().coins.member(2n)) {
+            result = contract.circuits.BurnLpOrderCloseY(this.makeContext(sender));
+        }
 
         this.commit(result.context);
         return result;
@@ -186,11 +200,11 @@ export class BurnLpOrderSimulator {
         this.nextCoinIndex = coinIndex;
         this.nextCoinColor = color;
 
-        const result = this.contract.circuits.BurnLpOrderReceiveFromAmm(
+        const result = this.contract.circuits.BurnLpOrderReceiveCoinFromAmm(
             this.makeContext(sender, [
                 this.makeIncomingCoin(color, amount, nonce),
             ]),
-            returnKind,
+            Number(returnKind),
             amount,
             nonce,
         );
@@ -230,4 +244,16 @@ export class BurnLpOrderSimulator {
         this.currentContractState = context.currentQueryContext.state;
         this.currentPrivateState = context.currentPrivateState;
     }
+}
+
+function makeNonceFromId(id: number) {
+    const nonce = new Uint8Array(32);
+    let value = id;
+
+    for (let i = 31; i >= 0 && value > 0; i -= 1) {
+        nonce[i] = value & 0xff;
+        value >>= 8;
+    }
+
+    return nonce;
 }

@@ -6,7 +6,7 @@ import {
     entryPointHash,
 } from "@midnight-ntwrk/compact-runtime";
 import { Contract, ledger } from "../../dist/amm/contract/index.js";
-import { type Address } from "./addresses.js";
+import { type Address } from "./constants.js";
 
 type CoinInfo = {
     nonce: Uint8Array;
@@ -30,6 +30,19 @@ const defaultRecipient: Address = {
     left: defaultSender,
     right: { bytes: new Uint8Array(32) },
 };
+const defaultSlot = 1n;
+const callOpening = 7n;
+
+const enum AmmOrderKind {
+    DepositXYLiq = 0,
+    DepositXLiq = 1,
+    DepositYLiq = 2,
+    SwapXToY = 3,
+    SwapYToX = 4,
+    WithdrawXYLiq = 5,
+    WithdrawXLiq = 6,
+    WithdrawYLiq = 7,
+}
 
 export class AmmSimulator {
     private contract: Contract;
@@ -87,7 +100,13 @@ export class AmmSimulator {
     }
 
     static makeContract(secret = batcherSecret) {
+        let nextNonceId = 1;
+
         return new Contract({
+            newNonce: (context) => {
+                const nonce = AmmSimulator.makeNonceFromId(nextNonceId++);
+                return [context.privateState, nonce];
+            },
             batcherSecret: (context) => [context.privateState, secret],
         });
     }
@@ -161,33 +180,25 @@ export class AmmSimulator {
 
             const nonce = this.makeNonce();
 
-            let result = this.contract.circuits.AmmDepositXYLiq(
-                this.makeContext([
-                    this.makeIncomingOutput(this.xReserves.color, xIn, nonce),
-                    this.makeIncomingOutput(this.yReserves.color, yIn, nonce),
-                ]),
-                xIn,
-                yIn,
-                nonce,
-                nonce,
-                defaultReturnCircuit,
-            );
+            this.placeOrder({ kind: AmmOrderKind.DepositXYLiq, fstAmount: xIn, sndAmount: yIn });
+            this.fundOrderX({ slot: defaultSlot, amount: xIn, nonce });
+            this.fundOrderY({ slot: defaultSlot, amount: yIn, nonce });
+            this.activateOrder(defaultSlot);
+
+            let result = this.contract.circuits.AmmValidateDepositXYLiq(this.makeContext(), lpOut);
             this.commit(result.context);
 
-            result = this.contract.circuits.AmmValidateDepositXYLiq(this.makeContext(), lpOut);
+            result = this.contract.circuits.AmmMintLp(this.makeContext());
             this.commit(result.context);
-
-            result = this.contract.circuits.AmmMintLp(this.makeContext(), this.makeNonce(), 0n);
-            this.commit(result.context);
+            this.payLp(defaultSlot);
+            this.clearOrder(defaultSlot);
 
             if (this.currentLedger().coins.member(1n)) {
-                result = this.contract.circuits.AmmMergeXLiq(this.makeContext());
-                this.commit(result.context);
+                this.mergeCoins(0n);
             }
 
             if (this.currentLedger().coins.member(3n)) {
-                result = this.contract.circuits.AmmMergeYLiq(this.makeContext());
-                this.commit(result.context);
+                this.mergeCoins(1n);
             }
         });
     }
@@ -196,24 +207,21 @@ export class AmmSimulator {
         this.runAtomically(() => {
             const nonce = this.makeNonce();
 
-            let result = this.contract.circuits.AmmWithdrawXYLiq(
-                this.makeContext([this.makeIncomingOutput(this.lpReserves.color, lpIn, nonce)]),
-                lpIn,
-                nonce,
-                defaultReturnCircuit,
-            );
+            this.placeOrder({ kind: AmmOrderKind.WithdrawXYLiq, fstAmount: lpIn });
+            this.fundOrderLp({ slot: defaultSlot, amount: lpIn, nonce });
+            this.activateOrder(defaultSlot);
+
+            let result = this.contract.circuits.AmmValidateWithdrawXYLiq(this.makeContext(), xOut, yOut);
             this.commit(result.context);
 
-            result = this.contract.circuits.AmmValidateWithdrawXYLiq(this.makeContext(), xOut, yOut);
+            result = this.contract.circuits.AmmSplitX(this.makeContext());
             this.commit(result.context);
 
-            result = this.contract.circuits.AmmSendX(this.makeContext(), 0n);
+            result = this.contract.circuits.AmmSplitY(this.makeContext());
             this.commit(result.context);
-
-            if (this.currentLedger().slot.is_some) {
-                result = this.contract.circuits.AmmSendY(this.makeContext(), 0n);
-                this.commit(result.context);
-            }
+            this.payX(defaultSlot);
+            this.payY(defaultSlot);
+            this.clearOrder(defaultSlot);
         });
     }
 
@@ -224,23 +232,20 @@ export class AmmSimulator {
 
             const nonce = this.makeNonce();
 
-            let result = this.contract.circuits.AmmSwapXToY(
-                this.makeContext([this.makeIncomingOutput(this.xReserves.color, xIn, nonce)]),
-                xIn,
-                nonce,
-                defaultReturnCircuit,
-            );
+            this.placeOrder({ kind: AmmOrderKind.SwapXToY, fstAmount: xIn });
+            this.fundOrderX({ slot: defaultSlot, amount: xIn, nonce });
+            this.activateOrder(defaultSlot);
+
+            let result = this.contract.circuits.AmmValidateSwapXToY(this.makeContext(), xFee, yOut);
             this.commit(result.context);
 
-            result = this.contract.circuits.AmmValidateSwapXToY(this.makeContext(), xFee, yOut);
+            result = this.contract.circuits.AmmSplitY(this.makeContext());
             this.commit(result.context);
-
-            result = this.contract.circuits.AmmSendY(this.makeContext(), 0n);
-            this.commit(result.context);
+            this.payY(defaultSlot);
+            this.clearOrder(defaultSlot);
 
             if (this.currentLedger().coins.member(1n)) {
-                result = this.contract.circuits.AmmMergeXLiq(this.makeContext());
-                this.commit(result.context);
+                this.mergeCoins(0n);
             }
         });
     }
@@ -252,23 +257,20 @@ export class AmmSimulator {
 
             const nonce = this.makeNonce();
 
-            let result = this.contract.circuits.AmmSwapYToX(
-                this.makeContext([this.makeIncomingOutput(this.yReserves.color, yIn, nonce)]),
-                yIn,
-                nonce,
-                defaultReturnCircuit,
-            );
+            this.placeOrder({ kind: AmmOrderKind.SwapYToX, sndAmount: yIn });
+            this.fundOrderY({ slot: defaultSlot, amount: yIn, nonce });
+            this.activateOrder(defaultSlot);
+
+            let result = this.contract.circuits.AmmValidateSwapYToX(this.makeContext(), xFee, xOut);
             this.commit(result.context);
 
-            result = this.contract.circuits.AmmValidateSwapYToX(this.makeContext(), xFee, xOut);
+            result = this.contract.circuits.AmmSplitX(this.makeContext());
             this.commit(result.context);
-
-            result = this.contract.circuits.AmmSendX(this.makeContext(), 0n);
-            this.commit(result.context);
+            this.payX(defaultSlot);
+            this.clearOrder(defaultSlot);
 
             if (this.currentLedger().coins.member(3n)) {
-                result = this.contract.circuits.AmmMergeYLiq(this.makeContext());
-                this.commit(result.context);
+                this.mergeCoins(1n);
             }
         });
     }
@@ -277,23 +279,20 @@ export class AmmSimulator {
         this.runAtomically(() => {
             const nonce = this.makeNonce();
 
-            let result = this.contract.circuits.AmmDepositXLiq(
-                this.makeContext([this.makeIncomingOutput(this.xReserves.color, xIn, nonce)]),
-                xIn,
-                nonce,
-                defaultReturnCircuit,
-            );
+            this.placeOrder({ kind: AmmOrderKind.DepositXLiq, fstAmount: xIn });
+            this.fundOrderX({ slot: defaultSlot, amount: xIn, nonce });
+            this.activateOrder(defaultSlot);
+
+            let result = this.contract.circuits.AmmValidateDepositXLiq(this.makeContext(), xSwap, xFee, ySwap, lpOut);
             this.commit(result.context);
 
-            result = this.contract.circuits.AmmValidateDepositXLiq(this.makeContext(), xSwap, xFee, ySwap, lpOut);
+            result = this.contract.circuits.AmmMintLp(this.makeContext());
             this.commit(result.context);
-
-            result = this.contract.circuits.AmmMintLp(this.makeContext(), this.makeNonce(), 0n);
-            this.commit(result.context);
+            this.payLp(defaultSlot);
+            this.clearOrder(defaultSlot);
 
             if (this.currentLedger().coins.member(1n)) {
-                result = this.contract.circuits.AmmMergeXLiq(this.makeContext());
-                this.commit(result.context);
+                this.mergeCoins(0n);
             }
         });
     }
@@ -302,23 +301,20 @@ export class AmmSimulator {
         this.runAtomically(() => {
             const nonce = this.makeNonce();
 
-            let result = this.contract.circuits.AmmDepositYLiq(
-                this.makeContext([this.makeIncomingOutput(this.yReserves.color, yIn, nonce)]),
-                yIn,
-                nonce,
-                defaultReturnCircuit,
-            );
+            this.placeOrder({ kind: AmmOrderKind.DepositYLiq, sndAmount: yIn });
+            this.fundOrderY({ slot: defaultSlot, amount: yIn, nonce });
+            this.activateOrder(defaultSlot);
+
+            let result = this.contract.circuits.AmmValidateDepositYLiq(this.makeContext(), ySwap, xFee, xSwap, lpOut);
             this.commit(result.context);
 
-            result = this.contract.circuits.AmmValidateDepositYLiq(this.makeContext(), ySwap, xFee, xSwap, lpOut);
+            result = this.contract.circuits.AmmMintLp(this.makeContext());
             this.commit(result.context);
-
-            result = this.contract.circuits.AmmMintLp(this.makeContext(), this.makeNonce(), 0n);
-            this.commit(result.context);
+            this.payLp(defaultSlot);
+            this.clearOrder(defaultSlot);
 
             if (this.currentLedger().coins.member(3n)) {
-                result = this.contract.circuits.AmmMergeYLiq(this.makeContext());
-                this.commit(result.context);
+                this.mergeCoins(1n);
             }
         });
     }
@@ -327,19 +323,17 @@ export class AmmSimulator {
         this.runAtomically(() => {
             const nonce = this.makeNonce();
 
-            let result = this.contract.circuits.AmmWithdrawXLiq(
-                this.makeContext([this.makeIncomingOutput(this.lpReserves.color, lpIn, nonce)]),
-                lpIn,
-                nonce,
-                defaultReturnCircuit,
-            );
+            this.placeOrder({ kind: AmmOrderKind.WithdrawXLiq, fstAmount: lpIn });
+            this.fundOrderLp({ slot: defaultSlot, amount: lpIn, nonce });
+            this.activateOrder(defaultSlot);
+
+            let result = this.contract.circuits.AmmValidateWithdrawXLiq(this.makeContext(), xOut, ySwap, xFee, xSwap);
             this.commit(result.context);
 
-            result = this.contract.circuits.AmmValidateWithdrawXLiq(this.makeContext(), xOut, ySwap, xFee, xSwap);
+            result = this.contract.circuits.AmmSplitX(this.makeContext());
             this.commit(result.context);
-
-            result = this.contract.circuits.AmmSendX(this.makeContext(), 0n);
-            this.commit(result.context);
+            this.payX(defaultSlot);
+            this.clearOrder(defaultSlot);
         });
     }
 
@@ -347,19 +341,17 @@ export class AmmSimulator {
         this.runAtomically(() => {
             const nonce = this.makeNonce();
 
-            let result = this.contract.circuits.AmmWithdrawYLiq(
-                this.makeContext([this.makeIncomingOutput(this.lpReserves.color, lpIn, nonce)]),
-                lpIn,
-                nonce,
-                defaultReturnCircuit,
-            );
+            this.placeOrder({ kind: AmmOrderKind.WithdrawYLiq, fstAmount: lpIn });
+            this.fundOrderLp({ slot: defaultSlot, amount: lpIn, nonce });
+            this.activateOrder(defaultSlot);
+
+            let result = this.contract.circuits.AmmValidateWithdrawYLiq(this.makeContext(), yOut, xSwap, xFee, ySwap);
             this.commit(result.context);
 
-            result = this.contract.circuits.AmmValidateWithdrawYLiq(this.makeContext(), yOut, xSwap, xFee, ySwap);
+            result = this.contract.circuits.AmmSplitY(this.makeContext());
             this.commit(result.context);
-
-            result = this.contract.circuits.AmmSendY(this.makeContext(), 0n);
-            this.commit(result.context);
+            this.payY(defaultSlot);
+            this.clearOrder(defaultSlot);
         });
     }
 
@@ -379,103 +371,59 @@ export class AmmSimulator {
     startDepositXY({ xIn, yIn }: { xIn: bigint; yIn: bigint }) {
         const xNonce = this.makeNonce();
         const yNonce = this.makeNonce();
-        const { context } = this.contract.circuits.AmmDepositXYLiq(
-            this.makeContext([
-                this.makeIncomingOutput(this.xReserves.color, xIn, xNonce),
-                this.makeIncomingOutput(this.yReserves.color, yIn, yNonce),
-            ]),
-            xIn,
-            yIn,
-            xNonce,
-            yNonce,
-            defaultReturnCircuit,
-        );
-
-        this.commit(context);
+        this.placeOrder({ kind: AmmOrderKind.DepositXYLiq, fstAmount: xIn, sndAmount: yIn });
+        this.fundOrderX({ slot: defaultSlot, amount: xIn, nonce: xNonce });
+        this.fundOrderY({ slot: defaultSlot, amount: yIn, nonce: yNonce });
+        this.activateOrder(defaultSlot);
     }
 
     startDepositX({ xIn }: { xIn: bigint }) {
         const nonce = this.makeNonce();
-        const { context } = this.contract.circuits.AmmDepositXLiq(
-            this.makeContext([this.makeIncomingOutput(this.xReserves.color, xIn, nonce)]),
-            xIn,
-            nonce,
-            defaultReturnCircuit,
-        );
-
-        this.commit(context);
+        this.placeOrder({ kind: AmmOrderKind.DepositXLiq, fstAmount: xIn });
+        this.fundOrderX({ slot: defaultSlot, amount: xIn, nonce });
+        this.activateOrder(defaultSlot);
     }
 
     startDepositY({ yIn }: { yIn: bigint }) {
         const nonce = this.makeNonce();
-        const { context } = this.contract.circuits.AmmDepositYLiq(
-            this.makeContext([this.makeIncomingOutput(this.yReserves.color, yIn, nonce)]),
-            yIn,
-            nonce,
-            defaultReturnCircuit,
-        );
-
-        this.commit(context);
+        this.placeOrder({ kind: AmmOrderKind.DepositYLiq, sndAmount: yIn });
+        this.fundOrderY({ slot: defaultSlot, amount: yIn, nonce });
+        this.activateOrder(defaultSlot);
     }
 
     startSwapXToY({ xIn }: { xIn: bigint }) {
         const nonce = this.makeNonce();
-        const { context } = this.contract.circuits.AmmSwapXToY(
-            this.makeContext([this.makeIncomingOutput(this.xReserves.color, xIn, nonce)]),
-            xIn,
-            nonce,
-            defaultReturnCircuit,
-        );
-
-        this.commit(context);
+        this.placeOrder({ kind: AmmOrderKind.SwapXToY, fstAmount: xIn });
+        this.fundOrderX({ slot: defaultSlot, amount: xIn, nonce });
+        this.activateOrder(defaultSlot);
     }
 
     startSwapYToX({ yIn }: { yIn: bigint }) {
         const nonce = this.makeNonce();
-        const { context } = this.contract.circuits.AmmSwapYToX(
-            this.makeContext([this.makeIncomingOutput(this.yReserves.color, yIn, nonce)]),
-            yIn,
-            nonce,
-            defaultReturnCircuit,
-        );
-
-        this.commit(context);
+        this.placeOrder({ kind: AmmOrderKind.SwapYToX, sndAmount: yIn });
+        this.fundOrderY({ slot: defaultSlot, amount: yIn, nonce });
+        this.activateOrder(defaultSlot);
     }
 
     startWithdrawXY({ lpIn }: { lpIn: bigint }) {
         const nonce = this.makeNonce();
-        const { context } = this.contract.circuits.AmmWithdrawXYLiq(
-            this.makeContext([this.makeIncomingOutput(this.lpReserves.color, lpIn, nonce)]),
-            lpIn,
-            nonce,
-            defaultReturnCircuit,
-        );
-
-        this.commit(context);
+        this.placeOrder({ kind: AmmOrderKind.WithdrawXYLiq, fstAmount: lpIn });
+        this.fundOrderLp({ slot: defaultSlot, amount: lpIn, nonce });
+        this.activateOrder(defaultSlot);
     }
 
     startWithdrawX({ lpIn }: { lpIn: bigint }) {
         const nonce = this.makeNonce();
-        const { context } = this.contract.circuits.AmmWithdrawXLiq(
-            this.makeContext([this.makeIncomingOutput(this.lpReserves.color, lpIn, nonce)]),
-            lpIn,
-            nonce,
-            defaultReturnCircuit,
-        );
-
-        this.commit(context);
+        this.placeOrder({ kind: AmmOrderKind.WithdrawXLiq, fstAmount: lpIn });
+        this.fundOrderLp({ slot: defaultSlot, amount: lpIn, nonce });
+        this.activateOrder(defaultSlot);
     }
 
     startWithdrawY({ lpIn }: { lpIn: bigint }) {
         const nonce = this.makeNonce();
-        const { context } = this.contract.circuits.AmmWithdrawYLiq(
-            this.makeContext([this.makeIncomingOutput(this.lpReserves.color, lpIn, nonce)]),
-            lpIn,
-            nonce,
-            defaultReturnCircuit,
-        );
-
-        this.commit(context);
+        this.placeOrder({ kind: AmmOrderKind.WithdrawYLiq, fstAmount: lpIn });
+        this.fundOrderLp({ slot: defaultSlot, amount: lpIn, nonce });
+        this.activateOrder(defaultSlot);
     }
 
     validateDepositXY(lpOut: bigint) {
@@ -527,31 +475,111 @@ export class AmmSimulator {
     }
 
     mintLp() {
-        const { context } = this.contract.circuits.AmmMintLp(this.makeContext(), this.makeNonce(), 0n);
+        const { context } = this.contract.circuits.AmmMintLp(this.makeContext());
 
         this.commit(context);
     }
 
     sendX() {
-        const { context } = this.contract.circuits.AmmSendX(this.makeContext(), 0n);
+        const { context } = this.contract.circuits.AmmSplitX(this.makeContext());
 
         this.commit(context);
     }
 
     sendY() {
-        const { context } = this.contract.circuits.AmmSendY(this.makeContext(), 0n);
+        const { context } = this.contract.circuits.AmmSplitY(this.makeContext());
 
         this.commit(context);
     }
 
     mergeX() {
-        const { context } = this.contract.circuits.AmmMergeXLiq(this.makeContext());
+        this.mergeCoins(0n);
+    }
+
+    mergeY() {
+        this.mergeCoins(1n);
+    }
+
+    placeOrder({
+        slot = defaultSlot,
+        kind,
+        fstAmount = 0n,
+        sndAmount = 0n,
+    }: { slot?: bigint; kind: AmmOrderKind; fstAmount?: bigint; sndAmount?: bigint }) {
+        const { context } = this.contract.circuits.AmmPlaceOrder(
+            this.makeContext(),
+            slot,
+            kind,
+            fstAmount,
+            sndAmount,
+            defaultReturnCircuit,
+        );
 
         this.commit(context);
     }
 
-    mergeY() {
-        const { context } = this.contract.circuits.AmmMergeYLiq(this.makeContext());
+    fundOrderX({ slot = defaultSlot, amount, nonce = this.makeNonce() }: { slot?: bigint; amount: bigint; nonce?: Uint8Array }) {
+        const { context } = this.contract.circuits.AmmFundOrderX(
+            this.makeContext([this.makeIncomingOutput(this.xReserves.color, amount, nonce)]),
+            slot,
+            nonce,
+        );
+
+        this.commit(context);
+    }
+
+    fundOrderY({ slot = defaultSlot, amount, nonce = this.makeNonce() }: { slot?: bigint; amount: bigint; nonce?: Uint8Array }) {
+        const { context } = this.contract.circuits.AmmFundOrderY(
+            this.makeContext([this.makeIncomingOutput(this.yReserves.color, amount, nonce)]),
+            slot,
+            nonce,
+        );
+
+        this.commit(context);
+    }
+
+    fundOrderLp({ slot = defaultSlot, amount, nonce = this.makeNonce() }: { slot?: bigint; amount: bigint; nonce?: Uint8Array }) {
+        const { context } = this.contract.circuits.AmmFundOrderLp(
+            this.makeContext([this.makeIncomingOutput(this.lpReserves.color, amount, nonce)]),
+            slot,
+            nonce,
+        );
+
+        this.commit(context);
+    }
+
+    mergeCoins(offset: bigint) {
+        const { context } = this.contract.circuits.AmmMergeCoins(this.makeContext(), offset);
+
+        this.commit(context);
+    }
+
+    activateOrder(slot = defaultSlot) {
+        const { context } = this.contract.circuits.AmmActivateOrder(this.makeContext(), slot);
+
+        this.commit(context);
+    }
+
+    payX(slot = defaultSlot) {
+        const { context } = this.contract.circuits.AmmPayX(this.makeContext(), slot, callOpening);
+
+        this.commit(context);
+    }
+
+    payY(slot = defaultSlot) {
+        const { context } = this.contract.circuits.AmmPayY(this.makeContext(), slot, callOpening);
+
+        this.commit(context);
+    }
+
+    payLp(slot = defaultSlot) {
+        const { context } = this.contract.circuits.AmmPayLp(this.makeContext(), slot, callOpening);
+
+        this.commit(context);
+    }
+
+    clearOrder(slot = defaultSlot) {
+        const { context } = this.contract.circuits.AmmClearOrder(this.makeContext(), slot);
 
         this.commit(context);
     }
@@ -632,8 +660,12 @@ export class AmmSimulator {
     }
 
     private makeNonce() {
+        return AmmSimulator.makeNonceFromId(this.nextNonceId++);
+    }
+
+    private static makeNonceFromId(id: number) {
         const nonce = new Uint8Array(32);
-        let value = this.nextNonceId++;
+        let value = id;
 
         for (let i = 31; i >= 0 && value > 0; i -= 1) {
             nonce[i] = value & 0xff;

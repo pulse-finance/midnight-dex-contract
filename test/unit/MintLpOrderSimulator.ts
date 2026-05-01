@@ -28,10 +28,14 @@ export const encodedMintLpAmmContractAddress = { bytes: encodeContractAddress(mi
 export const mintLpOwnerSecret = new Uint8Array(32).fill(5);
 export const mintLpOtherSecret = new Uint8Array(32).fill(6);
 export const mintLpReceiveCircuitHash = mintLpHashBytes("MintLpOrderReceiveFromAmm");
-export const mintLpAmmTickCircuitHash = mintLpHashBytes("AmmTick");
+export const mintLpAmmClearOrderCircuitHash = mintLpHashBytes("AmmClearOrder");
+export const mintLpAmmFundOrderXCircuitHash = mintLpHashBytes("AmmFundOrderX");
+export const mintLpAmmFundOrderYCircuitHash = mintLpHashBytes("AmmFundOrderY");
+export const mintLpAmmPlaceOrderCircuitHash = mintLpHashBytes("AmmPlaceOrder");
+export const mintLpAmmTickCircuitHash = mintLpAmmClearOrderCircuitHash;
 export const mintLpAmmCircuit = {
     address: encodedMintLpAmmContractAddress,
-    hash: mintLpHashBytes("AmmDepositXYLiq"),
+    hash: mintLpAmmPlaceOrderCircuitHash,
 };
 export const mintLpXColor = new Uint8Array(32).fill(8);
 export const mintLpYColor = new Uint8Array(32).fill(9);
@@ -57,6 +61,7 @@ export class MintLpOrderSimulator {
 
     constructor(secret = mintLpOwnerSecret) {
         this.contract = new Contract({
+            newNonce: (context: { privateState: any }) => [context.privateState, mintLpNonce],
             ownerSecret: (context: Parameters<Witnesses<any>["ownerSecret"]>[0]) => [context.privateState, secret],
             coinIndex: (context: { privateState: any }) => [context.privateState, this.nextCoinIndex],
             coinColor: (context: { privateState: any }) => [context.privateState, this.nextCoinColor],
@@ -65,7 +70,6 @@ export class MintLpOrderSimulator {
         const { currentContractState, currentPrivateState } = this.contract.initialState(
             createConstructorContext({}, mintLpOwner),
             mintLpReceiveCircuitHash,
-            mintLpAmmTickCircuitHash,
         );
 
         this.currentContractState = currentContractState;
@@ -74,6 +78,7 @@ export class MintLpOrderSimulator {
 
     static makeContract(secret = mintLpOwnerSecret) {
         return new Contract({
+            newNonce: (context: { privateState: any }) => [context.privateState, mintLpNonce],
             ownerSecret: (context: Parameters<Witnesses<any>["ownerSecret"]>[0]) => [context.privateState, secret],
             coinIndex: (context: { privateState: any }) => [context.privateState, 0n],
             coinColor: (context: { privateState: any }) => [context.privateState, mintLpReturnColor],
@@ -109,15 +114,22 @@ export class MintLpOrderSimulator {
                 this.makeIncomingCoin(xColor, xAmount, nonce),
                 this.makeIncomingCoin(yColor, yAmount, nonce),
             ]),
-            this.ownerCommitment(),
-            xAmount,
-            xColor,
-            yAmount,
-            yColor,
-            calls,
-            returnsTo,
-            colorReturned,
-            nonce,
+            {
+                ownerCommitment: this.ownerCommitment(),
+                amm: {
+                    address: calls.address,
+                    placeOrder: calls.hash,
+                    fundOrder: mintLpAmmFundOrderXCircuitHash,
+                    fundOrderAlt: mintLpAmmFundOrderYCircuitHash,
+                    clearOrder: mintLpAmmClearOrderCircuitHash,
+                },
+                xAmountSent: xAmount,
+                yAmountSent: yAmount,
+                xColorSent: xColor,
+                yColorSent: yColor,
+                colorReturned,
+                returnsTo,
+            },
         );
 
         this.commit(result.context);
@@ -125,12 +137,11 @@ export class MintLpOrderSimulator {
     }
 
     sendToAmm({ sender = mintLpOtherUser, calleeRnd = mintLpCallOpening, ammTick = 0n, ammTickRnd = mintLpTickCallOpening } = {}) {
-        const result = this.contract.circuits.MintLpOrderSendToAmm(
-            this.makeContext(sender),
-            calleeRnd,
-            ammTick,
-            ammTickRnd,
-        );
+        let result = this.contract.circuits.MintLpOrderReserveAmmSlot(this.makeContext(sender), ammTick + 1n, ammTickRnd);
+        this.commit(result.context);
+        result = this.contract.circuits.MintLpOrderSendXCoinToAmm(this.makeContext(sender), calleeRnd);
+        this.commit(result.context);
+        result = this.contract.circuits.MintLpOrderSendYCoinToAmm(this.makeContext(sender), calleeRnd);
 
         this.commit(result.context);
         return result;
@@ -164,7 +175,7 @@ export class MintLpOrderSimulator {
         const contract = secret === mintLpOwnerSecret
             ? this.contract
             : MintLpOrderSimulator.makeContract(secret);
-        const result = contract.circuits.MintLpOrderClose(this.makeContext(sender), ammTick, ammTickRnd);
+        const result = contract.circuits.MintLpOrderClose(this.makeContext(sender), ammTickRnd);
 
         this.commit(result.context);
         return result;
@@ -201,4 +212,16 @@ export class MintLpOrderSimulator {
         this.currentContractState = context.currentQueryContext.state;
         this.currentPrivateState = context.currentPrivateState;
     }
+}
+
+function makeNonceFromId(id: number) {
+    const nonce = new Uint8Array(32);
+    let value = id;
+
+    for (let i = 31; i >= 0 && value > 0; i -= 1) {
+        nonce[i] = value & 0xff;
+        value >>= 8;
+    }
+
+    return nonce;
 }
