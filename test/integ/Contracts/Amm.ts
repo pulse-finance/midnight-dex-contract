@@ -547,7 +547,7 @@ export class ContractHelpers {
         initialContractState: initialStates.contractState,
         initialZswapChainState: initialStates.zswapChainState,
         ledgerParameters: initialStates.ledgerParameters,
-        initialPrivateState: undefined as CompactContract.PrivateState<AmmInstance>,
+        initialPrivateState: undefined,
       },
       this.providers.walletProvider.getEncryptionPublicKey(),
     )
@@ -565,7 +565,7 @@ export class ContractHelpers {
         initialContractState: initialStates.contractState,
         initialZswapChainState: initialStates.zswapChainState,
         ledgerParameters: initialStates.ledgerParameters,
-        initialPrivateState: undefined as CompactContract.PrivateState<AmmInstance>,
+        initialPrivateState: undefined,
       },
       this.providers.walletProvider.getEncryptionPublicKey(),
     )
@@ -584,7 +584,7 @@ export class ContractHelpers {
         initialContractState: initialStates.contractState,
         initialZswapChainState: initialStates.zswapChainState,
         ledgerParameters: initialStates.ledgerParameters,
-        initialPrivateState: undefined as CompactContract.PrivateState<AmmInstance>,
+        initialPrivateState: undefined,
       },
       this.providers.walletProvider.getEncryptionPublicKey(),
     )

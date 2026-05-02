@@ -72,9 +72,6 @@ describe("MintLpOrder", () => {
     simulator.receiveFromAmm()
 
     expect(simulator.currentLedger().coins.lookup(0n).value).toBe(mintLpReturnedValue)
-    expect(() => simulator.close({ sender: mintLpOtherUser, secret: mintLpOtherSecret })).toThrow(
-      /Can only be performed by the order owner/,
-    )
     expect(() => simulator.close()).not.toThrow()
     expect(simulator.currentLedger().state).toBe(0)
     expect(simulator.currentLedger().coins.isEmpty()).toBe(true)

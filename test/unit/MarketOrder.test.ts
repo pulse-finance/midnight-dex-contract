@@ -8,7 +8,6 @@ import {
   coinValue,
   encodedAmmContractAddress,
   MarketOrderSimulator,
-  otherSecret,
   otherUser,
   owner,
   returnColor,
@@ -21,7 +20,7 @@ describe("MarketOrder", () => {
 
     expect(() => simulator.sendToAmm()).toThrow(/Unexpected MarketOrder state/)
     expect(() => simulator.receiveFromAmm()).toThrow(/Unexpected MarketOrder state/)
-    expect(() => simulator.close()).toThrow(/Can only be performed by the order owner/)
+    expect(() => simulator.close()).toThrow(/Unexpected MarketOrder state/)
 
     simulator.openOrder()
     expect(() => simulator.openOrder()).toThrow(/MarketOrder slot already occupied/)
@@ -55,11 +54,7 @@ describe("MarketOrder", () => {
     simulator.receiveFromAmm()
     expect(simulator.currentLedger().coins.lookup(0n).value).toBe(returnedValue)
 
-    expect(() => simulator.close({ sender: otherUser, secret: otherSecret })).toThrow(
-      /Can only be performed by the order owner/,
-    )
-
-    const closed = simulator.close()
+    const closed = simulator.close({ sender: otherUser })
     expect(simulator.currentLedger().state).toBe(0)
     expect(simulator.currentLedger().coins.isEmpty()).toBe(true)
     expect(closed.context.currentZswapLocalState.outputs[0].recipient.left.bytes).toEqual(

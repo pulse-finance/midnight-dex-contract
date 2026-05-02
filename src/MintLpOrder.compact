@@ -218,9 +218,7 @@ export circuit MintLpOrderCancel(): [] {
  * Used both to cancel and to liquidate after completion
  */
 export circuit MintLpOrderClose(calleeCommitmentOpening: Field): [] {
-    assertOnlyOwner();
-
-    assert(state == MintLpOrderState.SentX, "Unexpected MintLpOrder state");
+    assert(state == MintLpOrderState.SentY, "Unexpected MintLpOrder state");
 
     kernel.claimContractCall(
         order.amm.address.bytes,

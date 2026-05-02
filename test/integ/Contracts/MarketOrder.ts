@@ -48,10 +48,7 @@ function compile() {
   )
 }
 
-async function deploy(
-  compiled: Compiled,
-  providers: MidnightProviders,
-): Promise<ContractAddress> {
+async function deploy(compiled: Compiled, providers: MidnightProviders): Promise<ContractAddress> {
   const deployed = await deployContract(providers as ContractProviders<MarketOrderInstance>, {
     compiledContract: compiled,
     args: [fromHex(entryPointHash("MarketOrderReceiveCoinFromAmm"))],
@@ -126,7 +123,7 @@ export class ContractHelpers {
         initialContractState: initialStates.contractState,
         initialZswapChainState: initialStates.zswapChainState,
         ledgerParameters: initialStates.ledgerParameters,
-        initialPrivateState: undefined as CompactContract.PrivateState<MarketOrderInstance>,
+        initialPrivateState: undefined,
       },
       this.providers.walletProvider.getEncryptionPublicKey(),
     )
@@ -151,7 +148,7 @@ export class ContractHelpers {
         initialContractState: initialStates.contractState,
         initialZswapChainState: initialStates.zswapChainState,
         ledgerParameters: initialStates.ledgerParameters,
-        initialPrivateState: undefined as CompactContract.PrivateState<MarketOrderInstance>,
+        initialPrivateState: undefined,
       },
       this.providers.walletProvider.getEncryptionPublicKey(),
     )
@@ -188,7 +185,7 @@ export class ContractHelpers {
         initialContractState: initialStates.contractState,
         initialZswapChainState: initialStates.zswapChainState,
         ledgerParameters: initialStates.ledgerParameters,
-        initialPrivateState: undefined as CompactContract.PrivateState<MarketOrderInstance>,
+        initialPrivateState: undefined,
       },
       this.providers.walletProvider.getEncryptionPublicKey(),
     )
@@ -214,7 +211,7 @@ export class ContractHelpers {
         initialContractState: initialStates.contractState,
         initialZswapChainState: initialStates.zswapChainState,
         ledgerParameters: initialStates.ledgerParameters,
-        initialPrivateState: undefined as CompactContract.PrivateState<MarketOrderInstance>,
+        initialPrivateState: undefined,
       },
       this.providers.walletProvider.getEncryptionPublicKey(),
     )

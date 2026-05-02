@@ -73,6 +73,8 @@ function assertEqual<T>(actual: T, expected: T, message: string): void {
 type TestContext = {
   amm: Amm.ContractHelpers
   walletPublicKey: Buffer
+  xColor: Uint8Array
+  yColor: Uint8Array
 }
 
 async function main() {
@@ -122,25 +124,27 @@ async function main() {
 
   const testContext: TestContext = {
     amm,
-    walletPublicKey
+    walletPublicKey,
+    xColor,
+    yColor,
   }
 
-  //console.log("[integ] Deploying BurnLpOrder contract")
-  //const burnLpOrder = await BurnLpOrder.makeHelpers({}, providers)
-  //await testBurnLpOrderFlow(burnLpOrder, testContext)
+  console.log("[integ] Deploying BurnLpOrder contract")
+  const burnLpOrder = await BurnLpOrder.makeHelpers({}, providers)
+  await testBurnLpOrderFlow(burnLpOrder, testContext)
 
-  //console.log("[integ] Deploying MintLpOrder contract")
-  //const mintLpOrder = await MintLpOrder.makeHelpers(providers)
-  //await testMintLpFlow(mintLpOrder, testContext)
+  console.log("[integ] Deploying MintLpOrder contract")
+  const mintLpOrder = await MintLpOrder.makeHelpers(providers)
+  await testMintLpFlow(mintLpOrder, testContext)
 
   console.log("[integ] Deploying MarketOrder contract")
   const marketOrder = await MarketOrder.makeHelpers(providers)
 
-  //console.log("[integ] Running market order case swap-x-to-y")
-  //await testSwapXToYFlow(marketOrder, testContext)
-//
-  //console.log("[integ] Running market order case swap-y-to-x")
-  //await testSwapYToXFlow(marketOrder, testContext)
+  console.log("[integ] Running market order case swap-x-to-y")
+  await testSwapXToYFlow(marketOrder, testContext)
+
+  console.log("[integ] Running market order case swap-y-to-x")
+  await testSwapYToXFlow(marketOrder, testContext)
 
   console.log("[integ] Running market order case zap-in-x")
   await testZapInXFlow(marketOrder, testContext)
@@ -164,18 +168,12 @@ async function main() {
     "Unexpected final LP supply",
   )
   assertEqual(ammLedger.xRewards, amm.expectedState.xRewards, "Unexpected final X rewards")
-  //assert(!(await burnLpOrder.state()).coins.member(0n), "Burn LP order should be closed")
+  assert(!(await burnLpOrder.state()).coins.member(0n), "Burn LP order should be closed")
   console.log("[integ] Integration flow completed successfully")
 }
 
-async function testMintLpFlow(
-  mintLpOrder: MintLpOrder.ContractHelpers,
-  ctx: TestContext
-) {
-  const { amm, walletPublicKey } = ctx
-  const initialAmmState = await amm.state()
-  const xColor = initialAmmState.xColor
-  const yColor = initialAmmState.yColor
+async function testMintLpFlow(mintLpOrder: MintLpOrder.ContractHelpers, ctx: TestContext) {
+  const { amm, walletPublicKey, xColor, yColor } = ctx
 
   console.log("[integ] Place mint order")
   await mintLpOrder.open({
@@ -235,14 +233,8 @@ async function testMintLpFlow(
   )
 }
 
-async function testBurnLpOrderFlow(
-  burnLpOrder: BurnLpOrder.ContractHelpers,
-  ctx: TestContext
-) {
-  const { amm, walletPublicKey } = ctx
-  const initialAmmState = await amm.state()
-  const xColor = initialAmmState.xColor
-  const yColor = initialAmmState.yColor
+async function testBurnLpOrderFlow(burnLpOrder: BurnLpOrder.ContractHelpers, ctx: TestContext) {
+  const { amm, walletPublicKey, xColor, yColor } = ctx
 
   console.log("[integ] Running burn LP order flow")
   const burnSlot = 2n
@@ -295,15 +287,8 @@ async function testBurnLpOrderFlow(
   await burnLpOrder.closeY()
 }
 
-async function testSwapXToYFlow(
-  marketOrder: MarketOrder.ContractHelpers,
-  ctx: TestContext
-) {
-  const label = "swap-x-to-y"
-  const { amm, walletPublicKey } = ctx
-  const initialAmmState = await amm.state()
-  const xColor = initialAmmState.xColor
-  const yColor = initialAmmState.yColor
+async function testSwapXToYFlow(marketOrder: MarketOrder.ContractHelpers, ctx: TestContext) {
+  const { amm, walletPublicKey, xColor, yColor } = ctx
 
   const slot = 3n
   const swapX = Amm.calcSwapXToY(amm.expectedState, SWAP_X_IN)
@@ -342,18 +327,11 @@ async function testSwapXToYFlow(
 
   console.log("[integ] Closing swap-x-to-y market order")
   await marketOrder.close(amm, slot)
-  assert(!(await marketOrder.state()).coins.member(0n), `${label} market order should be closed`)
+  assert(!(await marketOrder.state()).coins.member(0n), `swap-x-to-y market order should be closed`)
 }
 
-async function testSwapYToXFlow(
-  marketOrder: MarketOrder.ContractHelpers,
-  ctx: TestContext
-) {
-  const label = "swap-y-to-x"
-  const { amm, walletPublicKey } = ctx
-  const initialAmmState = await amm.state()
-  const xColor = initialAmmState.xColor
-  const yColor = initialAmmState.yColor
+async function testSwapYToXFlow(marketOrder: MarketOrder.ContractHelpers, ctx: TestContext) {
+  const { amm, walletPublicKey, xColor, yColor } = ctx
 
   const slot = 4n
   const swapY = Amm.calcSwapYToX(amm.expectedState, SWAP_Y_IN)
@@ -392,17 +370,11 @@ async function testSwapYToXFlow(
 
   console.log("[integ] Closing swap-y-to-x market order")
   await marketOrder.close(amm, slot)
-  assert(!(await marketOrder.state()).coins.member(0n), `${label} market order should be closed`)
+  assert(!(await marketOrder.state()).coins.member(0n), `swap-y-to-x market order should be closed`)
 }
 
-async function testZapInXFlow(
-  marketOrder: MarketOrder.ContractHelpers,
-  ctx: TestContext
-) {
-  const label = "zap-in-x"
-  const { amm, walletPublicKey } = ctx
-  const initialAmmState = await amm.state()
-  const xColor = initialAmmState.xColor
+async function testZapInXFlow(marketOrder: MarketOrder.ContractHelpers, ctx: TestContext) {
+  const { amm, walletPublicKey, xColor } = ctx
 
   const slot = 5n
   const zapInX = Amm.findZapInX(amm.expectedState, ZAP_IN_X_IN)
@@ -438,17 +410,11 @@ async function testZapInXFlow(
 
   console.log("[integ] Closing zap-in-x market order")
   await marketOrder.close(amm, slot)
-  assert(!(await marketOrder.state()).coins.member(0n), `${label} market order should be closed`)
+  assert(!(await marketOrder.state()).coins.member(0n), `zap-in x market order should be closed`)
 }
 
-async function testZapInYFlow(
-  marketOrder: MarketOrder.ContractHelpers,
-  ctx: TestContext
-) {
-  const label = "zap-in-y"
-  const { amm, walletPublicKey } = ctx
-  const initialAmmState = await amm.state()
-  const yColor = initialAmmState.yColor
+async function testZapInYFlow(marketOrder: MarketOrder.ContractHelpers, ctx: TestContext) {
+  const { amm, walletPublicKey, yColor } = ctx
 
   const slot = 6n
   const zapInY = Amm.findZapInY(amm.expectedState, ZAP_IN_Y_IN)
@@ -484,17 +450,11 @@ async function testZapInYFlow(
 
   console.log("[integ] Closing zap-in-y market order")
   await marketOrder.close(amm, slot)
-  assert(!(await marketOrder.state()).coins.member(0n), `${label} market order should be closed`)
+  assert(!(await marketOrder.state()).coins.member(0n), `zap-in y market order should be closed`)
 }
 
-async function testZapOutXFlow(
-  marketOrder: MarketOrder.ContractHelpers,
-  ctx: TestContext
-) {
-  const label = "zap-out-x"
-  const { amm, walletPublicKey } = ctx
-  const initialAmmState = await amm.state()
-  const xColor = initialAmmState.xColor
+async function testZapOutXFlow(marketOrder: MarketOrder.ContractHelpers, ctx: TestContext) {
+  const { amm, walletPublicKey, xColor } = ctx
 
   const slot = 7n
   const zapOutX = Amm.findZapOutX(amm.expectedState, ZAP_OUT_X_LP_IN)
@@ -533,18 +493,11 @@ async function testZapOutXFlow(
 
   console.log("[integ] Closing zap-out-x market order")
   await marketOrder.close(amm, slot)
-  assert(!(await marketOrder.state()).coins.member(0n), `${label} market order should be closed`)
+  assert(!(await marketOrder.state()).coins.member(0n), `zap out x market order should be closed`)
 }
 
-async function testZapOutYFlow(
-  marketOrder: MarketOrder.ContractHelpers,
-  ctx: TestContext
-) {
-  const label = "zap-out-y"
-  const { amm, walletPublicKey } = ctx
-  const initialAmmState = await amm.state()
-  const yColor = initialAmmState.yColor
-
+async function testZapOutYFlow(marketOrder: MarketOrder.ContractHelpers, ctx: TestContext) {
+  const { amm, walletPublicKey, yColor } = ctx
   const slot = 8n
   const zapOutY = Amm.findZapOutY(amm.expectedState, ZAP_OUT_Y_LP_IN)
 
@@ -582,7 +535,7 @@ async function testZapOutYFlow(
 
   console.log("[integ] Closing zap-out-y market order")
   await marketOrder.close(amm, slot)
-  assert(!(await marketOrder.state()).coins.member(0n), `${label} market order should be closed`)
+  assert(!(await marketOrder.state()).coins.member(0n), `zap out y market order should be closed`)
 }
 
 await main()

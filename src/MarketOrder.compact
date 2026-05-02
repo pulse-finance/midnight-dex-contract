@@ -72,8 +72,8 @@ export circuit MarketOrderReserveAmmSlot(
             AmmPlaceOrderArgs{
                 slot,
                 order.kind,
-                xAmount(),
-                yAmount(),
+                fstAmount(),
+                sndAmount(),
                 CircuitId{
                     kernel.self(),
                     receiveCircuitHash
@@ -162,11 +162,9 @@ export circuit MarketOrderCancel(): [] {
 }
 
 /**
- * Used both to cancel and to liquidate after completion
+ * Used to liquidate after completion
  */
 export circuit MarketOrderClose(calleeCommitmentOpening: Field): [] {
-    assertOnlyOwner();
-
     assert(state == MarketOrderState.Sent, "Unexpected MarketOrder state");
 
     kernel.claimContractCall(
@@ -194,10 +192,12 @@ circuit assertOnlyOwner(): [] {
     assert(order.ownerCommitment == hash, "Can only be performed by the order owner");
 }
 
-circuit xAmount(): Uint<64> {
+circuit fstAmount(): Uint<64> {
     if (
         (order.kind == AmmOrderKind.SwapXToY) || 
-        (order.kind == AmmOrderKind.DepositXLiq)
+        (order.kind == AmmOrderKind.DepositXLiq) ||
+        (order.kind == AmmOrderKind.WithdrawXLiq) ||
+        (order.kind == AmmOrderKind.WithdrawYLiq)
     ) {
         return order.amountSent;
     } else {
@@ -205,7 +205,7 @@ circuit xAmount(): Uint<64> {
     }
 }
 
-circuit yAmount(): Uint<64> {
+circuit sndAmount(): Uint<64> {
     if (
         (order.kind == AmmOrderKind.SwapYToX) ||
         (order.kind == AmmOrderKind.DepositYLiq)

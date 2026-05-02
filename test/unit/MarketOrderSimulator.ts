@@ -96,9 +96,9 @@ export class MarketOrderSimulator {
   ownerCommitment() {
     return (
       this.contract as Contract & {
-        _persistentHash_1(value: [Uint8Array, Uint8Array]): Uint8Array
+        _persistentHash_0(value: [Uint8Array, Uint8Array]): Uint8Array
       }
-    )._persistentHash_1([encodeContractAddress(marketOrderContractAddress), ownerSecret])
+    )._persistentHash_0([encodeContractAddress(marketOrderContractAddress), ownerSecret])
   }
 
   currentLedger() {

@@ -634,13 +634,17 @@ describe("AMM assertion failures", () => {
   it("rejects excessive LP on two-sided deposits using the X bound", () => {
     const simulator = initialized()
     simulator.startDepositXY({ xIn: 100n, yIn: 200n })
-    expect(() => simulator.validateDepositXY(101n)).toThrow(/Too many LP tokens taken \(bound by xIn\)/)
+    expect(() => simulator.validateDepositXY(101n)).toThrow(
+      /Too many LP tokens taken \(bound by xIn\)/,
+    )
   })
 
   it("rejects excessive LP on two-sided deposits using the Y bound", () => {
     const simulator = initialized()
     simulator.startDepositXY({ xIn: 200n, yIn: 100n })
-    expect(() => simulator.validateDepositXY(101n)).toThrow(/Too many LP tokens taken \(bound by yIn\)/)
+    expect(() => simulator.validateDepositXY(101n)).toThrow(
+      /Too many LP tokens taken \(bound by yIn\)/,
+    )
   })
 
   it("rejects X zap-in validation with too little fee", () => {

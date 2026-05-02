@@ -54,13 +54,9 @@ function compile() {
   )
 }
 
-type BurnLpOrderProps = {
-}
+type BurnLpOrderProps = {}
 
-async function deploy(
-  compiled: Compiled,
-  providers: MidnightProviders,
-): Promise<ContractAddress> {
+async function deploy(compiled: Compiled, providers: MidnightProviders): Promise<ContractAddress> {
   const deployed = await deployContract(providers as ContractProviders<Instance>, {
     compiledContract: compiled,
     args: [fromHex(entryPointHash("BurnLpOrderReceiveCoinFromAmm"))],
@@ -159,7 +155,7 @@ export class ContractHelpers {
         initialContractState: initialStates.contractState,
         initialZswapChainState: initialStates.zswapChainState,
         ledgerParameters: initialStates.ledgerParameters,
-        initialPrivateState: undefined as CompactContract.PrivateState<Instance>,
+        initialPrivateState: undefined,
       },
       this.providers.walletProvider.getEncryptionPublicKey(),
     )
@@ -189,7 +185,7 @@ export class ContractHelpers {
         initialContractState: initialStates.contractState,
         initialZswapChainState: initialStates.zswapChainState,
         ledgerParameters: initialStates.ledgerParameters,
-        initialPrivateState: undefined as CompactContract.PrivateState<Instance>,
+        initialPrivateState: undefined,
       },
       this.providers.walletProvider.getEncryptionPublicKey(),
     )
@@ -213,7 +209,7 @@ export class ContractHelpers {
       orderKind,
       xAmount,
       yAmount,
-      this.circuitId("BurnLpOrderReceiveCoinFromAmm")
+      this.circuitId("BurnLpOrderReceiveCoinFromAmm"),
     )
 
     const initialStates = await this.publicStates()
@@ -228,7 +224,7 @@ export class ContractHelpers {
         initialContractState: initialStates.contractState,
         initialZswapChainState: initialStates.zswapChainState,
         ledgerParameters: initialStates.ledgerParameters,
-        initialPrivateState: undefined as CompactContract.PrivateState<Instance>,
+        initialPrivateState: undefined,
       },
       this.providers.walletProvider.getEncryptionPublicKey(),
     )
@@ -253,7 +249,7 @@ export class ContractHelpers {
         initialContractState: initialStates.contractState,
         initialZswapChainState: initialStates.zswapChainState,
         ledgerParameters: initialStates.ledgerParameters,
-        initialPrivateState: undefined as CompactContract.PrivateState<Instance>,
+        initialPrivateState: undefined,
       },
       this.providers.walletProvider.getEncryptionPublicKey(),
     )

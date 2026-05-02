@@ -48,10 +48,7 @@ function compile() {
   )
 }
 
-async function deploy(
-  compiled: Compiled,
-  providers: MidnightProviders,
-): Promise<ContractAddress> {
+async function deploy(compiled: Compiled, providers: MidnightProviders): Promise<ContractAddress> {
   const deployed = await deployContract(providers as ContractProviders<MintLpOrderInstance>, {
     compiledContract: compiled,
     args: [fromHex(entryPointHash("MintLpOrderReceiveFromAmm"))],
@@ -120,7 +117,7 @@ export class ContractHelpers {
         initialContractState: initialStates.contractState,
         initialZswapChainState: initialStates.zswapChainState,
         ledgerParameters: initialStates.ledgerParameters,
-        initialPrivateState: undefined as CompactContract.PrivateState<MintLpOrderInstance>,
+        initialPrivateState: undefined,
       },
       this.providers.walletProvider.getEncryptionPublicKey(),
     )
@@ -145,7 +142,7 @@ export class ContractHelpers {
         initialContractState: initialStates.contractState,
         initialZswapChainState: initialStates.zswapChainState,
         ledgerParameters: initialStates.ledgerParameters,
-        initialPrivateState: undefined as CompactContract.PrivateState<MintLpOrderInstance>,
+        initialPrivateState: undefined,
       },
       this.providers.walletProvider.getEncryptionPublicKey(),
     )
@@ -170,7 +167,7 @@ export class ContractHelpers {
         initialContractState: initialStates.contractState,
         initialZswapChainState: initialStates.zswapChainState,
         ledgerParameters: initialStates.ledgerParameters,
-        initialPrivateState: undefined as CompactContract.PrivateState<MintLpOrderInstance>,
+        initialPrivateState: undefined,
       },
       this.providers.walletProvider.getEncryptionPublicKey(),
     )
@@ -180,12 +177,7 @@ export class ContractHelpers {
     })
   }
 
-  async receiveFromAmm(
-    amm: Amm.ContractHelpers,
-    slot: bigint,
-    returnKind: bigint,
-    amount: bigint,
-  ) {
+  async receiveFromAmm(amm: Amm.ContractHelpers, slot: bigint, returnKind: bigint, amount: bigint) {
     const initialStates = await this.publicStates()
     const receiveCall = await createUnprovenCallTxFromInitialStates(
       this.providers.zkConfigProvider,
@@ -198,7 +190,7 @@ export class ContractHelpers {
         initialContractState: initialStates.contractState,
         initialZswapChainState: initialStates.zswapChainState,
         ledgerParameters: initialStates.ledgerParameters,
-        initialPrivateState: undefined as CompactContract.PrivateState<MintLpOrderInstance>,
+        initialPrivateState: undefined,
       },
       this.providers.walletProvider.getEncryptionPublicKey(),
     )
