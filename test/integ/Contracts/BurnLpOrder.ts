@@ -104,16 +104,16 @@ export class ContractHelpers {
     return CircuitId.circuitId(this.address, circuitName)
   }
 
-  async closeX(amm: Amm.ContractHelpers, slot: bigint): Promise<void> {
+  async clearAmmSlot(amm: Amm.ContractHelpers, slot: bigint): Promise<void> {
     const clearOrder = await amm.clearOrderTx(slot)
 
     const initialStates = await this.publicStates()
-    const closeCall = await createUnprovenCallTxFromInitialStates(
+    const clearAmmSlotCall = await createUnprovenCallTxFromInitialStates(
       this.providers.zkConfigProvider,
       {
         compiledContract: this.compiled,
         contractAddress: this.address,
-        circuitId: "BurnLpOrderCloseX",
+        circuitId: "BurnLpOrderClearAmmSlot",
         args: [CrossContract.commOpening(clearOrder)],
         coinPublicKey: this.providers.walletProvider.getCoinPublicKey(),
         initialContractState: initialStates.contractState,
@@ -124,9 +124,13 @@ export class ContractHelpers {
       this.providers.walletProvider.getEncryptionPublicKey(),
     )
 
-    await submitUnprovenTx(this.providers, mergeContractCallTxs(closeCall, clearOrder), {
+    await submitUnprovenTx(this.providers, mergeContractCallTxs(clearAmmSlotCall, clearOrder), {
       tokenKindsToBalance: ["dust"],
     })
+  }
+
+  get closeX() {
+    return this.endpoints.BurnLpOrderCloseX
   }
 
   get closeY() {

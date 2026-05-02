@@ -18,6 +18,7 @@ enum BurnLpOrderState {
     Opened,
     Reserved,
     Sent,
+    Cleared,
     ClosedX
 }
 
@@ -187,12 +188,7 @@ export circuit BurnLpOrderCancel(): [] {
     reset();
 }
 
-/**
- * Used both to cancel and to liquidate after completion
- */
-export circuit BurnLpOrderCloseX(calleeCommitmentOpening: Field): [] {
-    assertOnlyOwner();
-
+export circuit BurnLpOrderClearAmmSlot(calleeCommitmentOpening: Field): [] {
     assert(state == BurnLpOrderState.Sent, "Unexpected BurnLpOrder state");
 
     kernel.claimContractCall(
@@ -208,6 +204,17 @@ export circuit BurnLpOrderCloseX(calleeCommitmentOpening: Field): [] {
 
     assert(!coins.member(1), "Spam coin not merged");
     assert(!coins.member(3), "Spam coin not merged");
+
+    state = BurnLpOrderState.Cleared;
+}
+
+/**
+ * Used to liquidate after completion
+ */
+export circuit BurnLpOrderCloseX(): [] {
+    assertOnlyOwner();
+
+    assert(state == BurnLpOrderState.Cleared, "Unexpected BurnLpOrder state");
 
     const coin: QualifiedShieldedCoinInfo = coins.lookup(0);
 

@@ -9,41 +9,41 @@ describe("liquidity init/add/remove without swaps", () => {
     expect(() => new AmmSimulator(treasury, { fee: 10000n })).toThrow(/Fee too high/)
   })
 
-  it("xColor initialized at 9999...", () => {
+  it("initializes xColor to 9999...", () => {
     const xColor = simulator.getXColor()
 
     expect(xColor.every((b) => b == 9))
   })
 
-  it("yColor initialized at 10101010...", () => {
-    const xColor = simulator.getYColor()
+  it("initializes yColor to 10101010...", () => {
+    const yColor = simulator.getYColor()
 
-    expect(xColor.every((b) => b == 10))
+    expect(yColor.every((b) => b == 10))
   })
 
-  it("fee initialized at 10", () => {
+  it("initializes the fee to 10 bps", () => {
     expect(simulator.getFeeBps()).toBe(10n)
   })
 
-  it("lp initialized at 0", () => {
+  it("initializes LP supply to 0", () => {
     expect(simulator.getLPCirculatingSupply()).toBe(0n)
   })
 
-  it("x liquidity initialized at 0", () => {
+  it("initializes X liquidity to 0", () => {
     expect(simulator.getXLiquidity()).toBe(0n)
   })
 
-  it("y liquidity initialized at 0", () => {
+  it("initializes Y liquidity to 0", () => {
     expect(simulator.getYLiquidity()).toBe(0n)
   })
 
-  it("fails to mint if lpMinted isn't sqrt(xIn*yIn)", () => {
+  it("rejects initial LP output above sqrt(xIn*yIn)", () => {
     expect(() => simulator.initLiquidity({ xIn: 1000n, yIn: 1000n, lpOut: 1002n })).toThrow(
       /Too many LP tokens taken/,
     )
   })
 
-  it("can init lp", () => {
+  it("can initialize liquidity", () => {
     simulator.initLiquidity({ xIn: 1000n, yIn: 1000n })
   })
 
@@ -73,13 +73,13 @@ describe("liquidity init/add/remove without swaps", () => {
     }).toThrow(/Fee too high/)
   })
 
-  it("can update the fee and treasury", () => {
+  it("can update the fee", () => {
     simulator.update({ fee: 20n, treasury })
 
     expect(simulator.getFeeBps()).toBe(20n)
   })
 
-  it("lp is 1000n after init", () => {
+  it("LP supply is 1000n after initialization", () => {
     expect(simulator.getLPCirculatingSupply()).toBe(1000n)
   })
 
@@ -87,29 +87,29 @@ describe("liquidity init/add/remove without swaps", () => {
     expect(simulator.xReserves.value).toBe(1000n)
   })
 
-  it("rejects additional liquidity because LP minting requires an unvalidated active order", () => {
+  it("can add balanced liquidity", () => {
     expect(() =>
       simulator.addLiquidity({
         xIn: 900n,
         yIn: 900n,
       }),
-    ).toThrow(/Unexpected active order state/)
+    ).not.toThrow()
   })
 
-  it("xLiquidity in reserves coin is unchanged after rejected add", () => {
-    expect(simulator.xReserves.value).toBe(1000n)
+  it("X reserve coin increases after adding balanced liquidity", () => {
+    expect(simulator.xReserves.value).toBe(1900n)
   })
 
-  it("lp remains 1000n after rejected add", () => {
-    expect(simulator.getLPCirculatingSupply()).toBe(1000n)
+  it("LP supply increases after adding balanced liquidity", () => {
+    expect(simulator.getLPCirculatingSupply()).toBe(1900n)
   })
 
-  it("getXLiquidity() remains 1000n after rejected add", () => {
-    expect(simulator.getXLiquidity()).toBe(1000n)
+  it("X liquidity increases after adding balanced liquidity", () => {
+    expect(simulator.getXLiquidity()).toBe(1900n)
   })
 
-  it("getYLiquidity() remains 1000n after rejected add", () => {
-    expect(simulator.getYLiquidity()).toBe(1000n)
+  it("Y liquidity increases after adding balanced liquidity", () => {
+    expect(simulator.getYLiquidity()).toBe(1900n)
   })
 
   it("fails to remove liquidity if xOut is too high", () => {
@@ -140,23 +140,23 @@ describe("liquidity init/add/remove without swaps", () => {
     })
   })
 
-  it("lp is 500n after removal", () => {
-    expect(simulator.getLPCirculatingSupply()).toBe(500n)
+  it("LP supply decreases by the burned amount after removal", () => {
+    expect(simulator.getLPCirculatingSupply()).toBe(1400n)
   })
 
-  it("getXLiquidity() is 500n after removal", () => {
-    expect(simulator.getXLiquidity()).toBe(500n)
+  it("X liquidity decreases by the withdrawn amount after removal", () => {
+    expect(simulator.getXLiquidity()).toBe(1400n)
   })
 
-  it("getYLiquidity() is 500n after removal", () => {
-    expect(simulator.getYLiquidity()).toBe(500n)
+  it("Y liquidity decreases by the withdrawn amount after removal", () => {
+    expect(simulator.getYLiquidity()).toBe(1400n)
   })
 })
 
 describe("init liquidity with an X to Y swap", () => {
   const simulator = new AmmSimulator(treasury)
 
-  it("can init lp", () => {
+  it("can initialize liquidity", () => {
     simulator.initLiquidity({ xIn: 1_000_000n, yIn: 2_000_000n })
   })
 
@@ -198,7 +198,7 @@ describe("init liquidity with an X to Y swap", () => {
 describe("init liquidity with an Y to X swap", () => {
   const simulator = new AmmSimulator(treasury)
 
-  it("can init lp", () => {
+  it("can initialize liquidity", () => {
     simulator.initLiquidity({ xIn: 1_000_000n, yIn: 2_000_000n })
   })
 
@@ -238,7 +238,7 @@ describe("init liquidity with an Y to X swap", () => {
 })
 
 describe("zap liquidity paths", () => {
-  it("rejects zap X into LP at the active-order state assertion", () => {
+  it("can zap X into LP", () => {
     const simulator = new AmmSimulator(treasury)
 
     simulator.initLiquidity({
@@ -254,10 +254,15 @@ describe("zap liquidity paths", () => {
         ySwap: 999n,
         lpOut: 498n,
       }),
-    ).toThrow(/Active order already validated/)
+    ).not.toThrow()
+
+    expect(simulator.getXLiquidity()).toBe(1_000_999n)
+    expect(simulator.getYLiquidity()).toBe(2_000_000n)
+    expect(simulator.getXRewards()).toBe(1n)
+    expect(simulator.getLPCirculatingSupply()).toBe(1_000_498n)
   })
 
-  it("rejects zap Y into LP when validator underflows", () => {
+  it("can zap Y into LP", () => {
     const simulator = new AmmSimulator(treasury)
 
     simulator.initLiquidity({
@@ -273,7 +278,12 @@ describe("zap liquidity paths", () => {
         xSwap: 499n,
         lpOut: 498n,
       }),
-    ).toThrow(/result of subtraction would be negative/)
+    ).not.toThrow()
+
+    expect(simulator.getXLiquidity()).toBe(999_999n)
+    expect(simulator.getYLiquidity()).toBe(2_002_000n)
+    expect(simulator.getXRewards()).toBe(1n)
+    expect(simulator.getLPCirculatingSupply()).toBe(1_000_498n)
   })
 
   it("can zap LP out to X", () => {
@@ -335,6 +345,7 @@ describe("AMM assertion failures", () => {
     expect(() => simulator.mintLp()).toThrow(/No active order/)
     expect(() => simulator.sendX()).toThrow(/No active order/)
     expect(() => simulator.sendY()).toThrow(/No active order/)
+    expect(() => simulator.deactivateOrder()).toThrow(/No active order/)
   })
 
   it("rejects activating an unset order slot", () => {
@@ -500,7 +511,7 @@ describe("AMM assertion failures", () => {
         ySwap: 1n,
         lpOut: 1n,
       }),
-    ).toThrow(/Active order already validated/)
+    ).toThrow(/result of subtraction would be negative/)
   })
 
   it("rejects Y deposits after all LP supply has been burned", () => {
@@ -524,6 +535,7 @@ describe("AMM assertion failures", () => {
     expect(() => simulator.mintLp()).toThrow(/Active order isn't a deposit order/)
     expect(() => simulator.sendX()).toThrow(/Active order doesn't require X payment/)
     expect(() => simulator.sendY()).toThrow(/Unexpected active order state/)
+    expect(() => simulator.deactivateOrder()).toThrow(/Unexpected order state/)
     expect(() => simulator.validateSwapYToX({ xFee: 1n, xOut: 1n })).toThrow(
       /Active order isn't a SwapYToX order/,
     )
@@ -575,21 +587,63 @@ describe("AMM assertion failures", () => {
     expect(() => simulator.sendX()).toThrow(/Active order doesn't require X payment/)
   })
 
-  it("rejects excessive LP on two-sided deposits using the Y bound", () => {
+  it("requires deactivation after splitting an X-to-Y swap before payout", () => {
+    const simulator = initialized()
+
+    simulator.startSwapXToY({ xIn: 100n })
+    simulator.validateSwapXToY({ xFee: 1n, yOut: 90n })
+    simulator.sendY()
+
+    expect(() => simulator.payY()).toThrow(/Unexpected amm order state/)
+    expect(() => simulator.clearOrder()).toThrow(/Order not yet fully paid out/)
+
+    simulator.deactivateOrder()
+
+    expect(() => simulator.payY()).not.toThrow()
+    expect(() => simulator.clearOrder()).not.toThrow()
+  })
+
+  it("requires deactivation after splitting a Y-to-X swap before payout", () => {
+    const simulator = initialized()
+
+    simulator.startSwapYToX({ yIn: 100n })
+    simulator.validateSwapYToX({ xFee: 1n, xOut: 89n })
+    simulator.sendX()
+
+    expect(() => simulator.payX()).toThrow(/Unexpected amm order state/)
+    expect(() => simulator.clearOrder()).toThrow(/Order not yet fully paid out/)
+
+    simulator.deactivateOrder()
+
+    expect(() => simulator.payX()).not.toThrow()
+    expect(() => simulator.clearOrder()).not.toThrow()
+  })
+
+  it("requires X split before Y split on two-sided withdrawals", () => {
+    const simulator = initialized()
+
+    simulator.startWithdrawXY({ lpIn: 100n })
+    simulator.validateWithdrawXY({ xOut: 100n, yOut: 100n })
+
+    expect(() => simulator.sendY()).toThrow(/Must pay X before paying Y/)
+
+    simulator.sendX()
+    expect(() => simulator.sendY()).not.toThrow()
+  })
+
+  it("rejects excessive LP on two-sided deposits using the X bound", () => {
     const simulator = initialized()
     simulator.startDepositXY({ xIn: 100n, yIn: 200n })
-    expect(() => simulator.validateDepositXY(101n)).toThrow(
-      /Too many LP tokens taken \(bound by yIn\)/,
-    )
+    expect(() => simulator.validateDepositXY(101n)).toThrow(/Too many LP tokens taken \(bound by xIn\)/)
   })
 
-  it("rejects a mismatched LP amount on two-sided deposits when Y is the limiting side", () => {
+  it("rejects excessive LP on two-sided deposits using the Y bound", () => {
     const simulator = initialized()
     simulator.startDepositXY({ xIn: 200n, yIn: 100n })
-    expect(() => simulator.validateDepositXY(101n)).toThrow(/Too little LP tokens minted/)
+    expect(() => simulator.validateDepositXY(101n)).toThrow(/Too many LP tokens taken \(bound by yIn\)/)
   })
 
-  it("rejects X zap-in validation before checking low fees", () => {
+  it("rejects X zap-in validation with too little fee", () => {
     const simulator = initialized()
     simulator.startDepositX({ xIn: 1000n })
     expect(() =>
@@ -599,10 +653,10 @@ describe("AMM assertion failures", () => {
         ySwap: 1n,
         lpOut: 1n,
       }),
-    ).toThrow(/Active order already validated/)
+    ).toThrow(/Fee too low/)
   })
 
-  it("rejects X zap-in validation before checking k", () => {
+  it("rejects X zap-in swaps that lower k", () => {
     const simulator = initialized()
     simulator.startDepositX({ xIn: 1000n })
     expect(() =>
@@ -612,18 +666,18 @@ describe("AMM assertion failures", () => {
         ySwap: 900n,
         lpOut: 1n,
       }),
-    ).toThrow(/Active order already validated/)
+    ).toThrow(/Post-swap k is lower than initial k/)
   })
 
-  it("rejects X zap-in validation before checking X-heavy splits", () => {
+  it("rejects X zap-in splits that are too X-heavy", () => {
     const simulator = initialized()
     simulator.startDepositX({ xIn: 1000n })
     expect(() => simulator.validateDepositX({ xSwap: 3n, xFee: 1n, ySwap: 1n, lpOut: 1n })).toThrow(
-      /Active order already validated/,
+      /X zap-in split too X heavy/,
     )
   })
 
-  it("rejects X zap-in validation before checking Y-heavy splits", () => {
+  it("rejects X zap-in splits that are too Y-heavy", () => {
     const simulator = initialized()
     simulator.startDepositX({ xIn: 1000n })
     expect(() =>
@@ -633,10 +687,10 @@ describe("AMM assertion failures", () => {
         ySwap: 293n,
         lpOut: 413n,
       }),
-    ).toThrow(/Active order already validated/)
+    ).toThrow(/X zap-in split too Y heavy/)
   })
 
-  it("rejects X zap-in validation before checking LP output", () => {
+  it("rejects excessive LP output for balanced X zap-in deposits", () => {
     const simulator = initialized({
       xIn: 1_000_000n,
       yIn: 2_000_000n,
@@ -650,7 +704,7 @@ describe("AMM assertion failures", () => {
         ySwap: 999n,
         lpOut: 499n,
       }),
-    ).toThrow(/Active order already validated/)
+    ).toThrow(/Too many LP tokens taken/)
   })
 
   it("rejects low Y zap-in fees", () => {
@@ -683,7 +737,7 @@ describe("AMM assertion failures", () => {
     const simulator = initialized()
     simulator.startDepositY({ yIn: 1000n })
     expect(() => simulator.validateDepositY({ ySwap: 3n, xFee: 1n, xSwap: 1n, lpOut: 2n })).toThrow(
-      /result of subtraction would be negative/,
+      /Y zap-in split too Y heavy/,
     )
   })
 
@@ -697,7 +751,7 @@ describe("AMM assertion failures", () => {
         xSwap: 293n,
         lpOut: 413n,
       }),
-    ).toThrow(/result of subtraction would be negative/)
+    ).toThrow(/Y zap-in split too X heavy/)
   })
 
   it("rejects excessive LP for balanced Y zap-in deposits", () => {
@@ -714,7 +768,7 @@ describe("AMM assertion failures", () => {
         xSwap: 499n,
         lpOut: 499n,
       }),
-    ).toThrow(/result of subtraction would be negative/)
+    ).toThrow(/Too many LP tokens minted \(bound by y\)/)
   })
 
   it("rejects excessive X removal on X zap-outs", () => {
@@ -825,7 +879,7 @@ describe("AMM assertion failures", () => {
     ).toThrow(/Post-swap k is lower than pre-swap k/)
   })
 
-  it("rejects X zap-in validation before minting can occupy temporary coin positions", () => {
+  it("accepts balanced X zap-in validation arguments", () => {
     const simulator = initialized({
       xIn: 1_000_000n,
       yIn: 2_000_000n,
@@ -839,10 +893,10 @@ describe("AMM assertion failures", () => {
         ySwap: 999n,
         lpOut: 498n,
       }),
-    ).toThrow(/Active order already validated/)
+    ).not.toThrow()
   })
 
-  it("rejects occupied Y temporary coin positions", () => {
+  it("accepts balanced Y zap-in validation arguments", () => {
     const simulator = initialized({
       xIn: 1_000_000n,
       yIn: 2_000_000n,
@@ -856,7 +910,7 @@ describe("AMM assertion failures", () => {
         xSwap: 499n,
         lpOut: 498n,
       }),
-    ).toThrow(/result of subtraction would be negative/)
+    ).not.toThrow()
   })
 
   it("allows an X-to-Y swap that produces no Y change", () => {
@@ -866,12 +920,11 @@ describe("AMM assertion failures", () => {
     expect(() => simulator.sendY()).not.toThrow()
   })
 
-  it("allows X sends when sendShielded produces no change", () => {
+  it("rejects X split when the reserve coin would have no change", () => {
     const simulator = initialized()
     simulator.startWithdrawXY({ lpIn: 1000n })
     simulator.validateWithdrawXY({ xOut: 1000n, yOut: 1000n })
-    expect(() => simulator.sendX()).not.toThrow()
-    expect(() => simulator.sendY()).not.toThrow()
+    expect(() => simulator.sendX()).toThrow(/Some changes expected/)
   })
 
   it("surfaces map lookup failures when an X merge coin is missing", () => {
@@ -884,7 +937,7 @@ describe("AMM assertion failures", () => {
     expect(() => simulator.mergeY()).toThrow(/expected a cell, received null/)
   })
 
-  it("rejects malicious X-to-Y swap fee arguments", () => {
+  it("rejects overlarge X-to-Y swap fee arguments", () => {
     const simulator = initialized({
       xIn: 1_000_000n,
       yIn: 2_000_000n,
@@ -894,7 +947,7 @@ describe("AMM assertion failures", () => {
     expect(() => simulator.validateSwapXToY({ xFee: 1000n, yOut: 0n })).toThrow()
   })
 
-  it("rejects malicious X-to-Y swap output arguments", () => {
+  it("rejects X-to-Y swap output that is too small", () => {
     const simulator = initialized({
       xIn: 1_000_000n,
       yIn: 2_000_000n,
@@ -906,7 +959,7 @@ describe("AMM assertion failures", () => {
     )
   })
 
-  it("rejects malicious Y-to-X swap fee arguments", () => {
+  it("rejects too-small Y-to-X swap fee arguments", () => {
     const simulator = initialized({
       xIn: 1_000_000n,
       yIn: 2_000_000n,
@@ -916,7 +969,7 @@ describe("AMM assertion failures", () => {
     expect(() => simulator.validateSwapYToX({ xFee: 0n, xOut: 0n })).toThrow()
   })
 
-  it("rejects malicious Y-to-X swap output arguments", () => {
+  it("rejects Y-to-X swap output that is too small", () => {
     const simulator = initialized({
       xIn: 1_000_000n,
       yIn: 2_000_000n,
@@ -938,7 +991,7 @@ describe("AMM assertion failures", () => {
     expect(() => simulator.validateDepositXY(0n)).toThrow(/Too little LP tokens minted/)
   })
 
-  it("rejects X zap-in fee arguments at the active-order state assertion", () => {
+  it("rejects overlarge X zap-in fee arguments", () => {
     const simulator = initialized({
       xIn: 1_000_000n,
       yIn: 2_000_000n,
@@ -952,10 +1005,10 @@ describe("AMM assertion failures", () => {
         ySwap: 0n,
         lpOut: 0n,
       }),
-    ).toThrow(/Active order already validated/)
+    ).toThrow(/Fee too high/)
   })
 
-  it("rejects X zap-in output arguments at the active-order state assertion", () => {
+  it("rejects X zap-in output arguments that over-preserve k", () => {
     const simulator = initialized({
       xIn: 1_000_000n,
       yIn: 2_000_000n,
@@ -969,7 +1022,7 @@ describe("AMM assertion failures", () => {
         ySwap: 0n,
         lpOut: 0n,
       }),
-    ).toThrow(/Active order already validated/)
+    ).toThrow(/Post-swap k is too high/)
   })
 
   it("rejects zero-swap X zap-in arguments", () => {
@@ -984,7 +1037,7 @@ describe("AMM assertion failures", () => {
     ).toThrow()
   })
 
-  it("rejects malicious Y zap-in zero-output arguments", () => {
+  it("rejects Y zap-in zero-output arguments", () => {
     const simulator = initialized({
       xIn: 1_000_000n,
       yIn: 2_000_000n,
@@ -1001,7 +1054,7 @@ describe("AMM assertion failures", () => {
     ).toThrow()
   })
 
-  it("rejects malicious Y zap-in output arguments that over-preserve k", () => {
+  it("rejects Y zap-in output arguments that over-preserve k", () => {
     const simulator = initialized({
       xIn: 1_000_000n,
       yIn: 2_000_000n,
@@ -1193,7 +1246,7 @@ describe("zero-fee pools", () => {
         ySwap: 999n,
         lpOut: 498n,
       }),
-    ).toThrow(/Active order already validated/)
+    ).toThrow(/Fee too high/)
 
     const depositY = new AmmSimulator(treasury, { fee: 0n })
     depositY.initLiquidity({

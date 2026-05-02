@@ -117,6 +117,7 @@ export const CircuitNames = [
   "AmmMintLp",
   "AmmSplitX",
   "AmmSplitY",
+  "AmmDeactivateOrder",
   "AmmPayX",
   "AmmPayY",
   "AmmPayLp",
@@ -529,6 +530,10 @@ export class ContractHelpers {
     return this.endpoints.AmmSplitY
   }
 
+  get deactivateOrder() {
+    return this.endpoints.AmmDeactivateOrder
+  }
+
   async payTx(payCircuit: PayCircuit, slot: bigint, calleeOpening: bigint) {
     const initialStates = await this.publicStates()
     return await createUnprovenCallTxFromInitialStates(
@@ -538,6 +543,24 @@ export class ContractHelpers {
         contractAddress: this.address,
         circuitId: payCircuit,
         args: [slot, calleeOpening],
+        coinPublicKey: this.providers.walletProvider.getCoinPublicKey(),
+        initialContractState: initialStates.contractState,
+        initialZswapChainState: initialStates.zswapChainState,
+        ledgerParameters: initialStates.ledgerParameters,
+        initialPrivateState: undefined as CompactContract.PrivateState<AmmInstance>,
+      },
+      this.providers.walletProvider.getEncryptionPublicKey(),
+    )
+  }
+
+  async deactivateOrderTx(): Promise<UnsubmittedCallTxData<AmmInstance, "AmmDeactivateOrder">> {
+    const initialStates = await this.publicStates()
+    return await createUnprovenCallTxFromInitialStates(
+      this.providers.zkConfigProvider,
+      {
+        compiledContract: this.compiled,
+        contractAddress: this.address,
+        circuitId: "AmmDeactivateOrder",
         coinPublicKey: this.providers.walletProvider.getCoinPublicKey(),
         initialContractState: initialStates.contractState,
         initialZswapChainState: initialStates.zswapChainState,

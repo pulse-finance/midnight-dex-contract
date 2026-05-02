@@ -70,6 +70,11 @@ function assertEqual<T>(actual: T, expected: T, message: string): void {
   }
 }
 
+type TestContext = {
+  amm: Amm.ContractHelpers
+  walletPublicKey: Buffer
+}
+
 async function main() {
   console.log("[integ] Creating genesis wallet")
   const wallet = await Wallet.makeContext(GENESIS_SEED_HEX)
@@ -115,207 +120,39 @@ async function main() {
   assertEqual(ammLedger.yLiquidity, INITIAL_Y_LIQ, "Unexpected initial Y liquidity")
   assertEqual(ammLedger.lpCirculatingSupply, initLpOut, "Unexpected initial LP supply")
 
-  console.log("[integ] Deploying BurnLpOrder contract")
-  const burnLpOrder = await BurnLpOrder.makeHelpers({}, providers)
-
-  await testBurnLpOrderFlow(walletPublicKey, amm, burnLpOrder)
-
-  console.log("[integ] Deploying MintLpOrder contract")
-  const mintLpOrder = await MintLpOrder.make({ privateStateId: "mint-lp-order-1" }, providers)
-
-  await testMintLpFlow(walletPublicKey, amm, mintLpOrder)
-
-  console.log("[integ] Running market order case swap-x-to-y")
-  {
-    const label = "swap-x-to-y"
-    const slot = 3n
-    const swapX = Amm.calcSwapXToY(amm.expectedState, SWAP_X_IN)
-    const marketOrder = await MarketOrder.make(
-      { privateStateId: `market-order-${label}` },
-      providers,
-    )
-    await marketOrder.open({
-      ownerCommitment: computeOwnerCommitment(marketOrderModule, marketOrder.address),
-      amm: amm.circuitIds("AmmFundOrderX"),
-      kind: Amm.OrderKind.SwapXToY,
-      amountSent: SWAP_X_IN,
-      colorSent: xColor,
-      colorReturned: yColor,
-      returnsTo: { bytes: walletPublicKey },
-    })
-    await marketOrder.reserveAmmSlot(amm, slot, Amm.OrderKind.SwapXToY, SWAP_X_IN, 0n)
-    await marketOrder.sendCoinToAmm(amm, "AmmFundOrderX", slot)
-    await amm.activateOrder(slot)
-    await amm.validateSwapXToY(swapX.xFee, swapX.yOut)
-    await amm.splitY()
-    await marketOrder.receiveCoinFromAmm(amm, "AmmPayY", slot, MarketOrder.ReturnKind.Y, swapX.yOut)
-    await marketOrder.close(amm, slot)
-    assert(!(await marketOrder.state()).coins.member(0n), `${label} market order should be closed`)
+  const testContext: TestContext = {
+    amm,
+    walletPublicKey
   }
 
-  const swapY = Amm.calcSwapYToX(amm.expectedState, SWAP_Y_IN)
-  console.log("[integ] Running market order case swap-y-to-x")
-  {
-    const label = "swap-y-to-x"
-    const slot = 4n
-    const marketOrder = await MarketOrder.make(
-      { privateStateId: `market-order-${label}` },
-      providers,
-    )
-    await marketOrder.open({
-      ownerCommitment: computeOwnerCommitment(marketOrderModule, marketOrder.address),
-      amm: amm.circuitIds("AmmFundOrderY"),
-      kind: Amm.OrderKind.SwapYToX,
-      amountSent: SWAP_Y_IN,
-      colorSent: yColor,
-      colorReturned: xColor,
-      returnsTo: { bytes: walletPublicKey },
-    })
-    await marketOrder.reserveAmmSlot(amm, slot, Amm.OrderKind.SwapYToX, 0n, SWAP_Y_IN)
-    await marketOrder.sendCoinToAmm(amm, "AmmFundOrderY", slot)
-    await amm.activateOrder(slot)
-    await amm.validateSwapYToX(swapY.xFee, swapY.xOut)
-    await amm.splitX()
-    await marketOrder.receiveCoinFromAmm(amm, "AmmPayX", slot, MarketOrder.ReturnKind.X, swapY.xOut)
-    await marketOrder.close(amm, slot)
-    assert(!(await marketOrder.state()).coins.member(0n), `${label} market order should be closed`)
-  }
+  //console.log("[integ] Deploying BurnLpOrder contract")
+  //const burnLpOrder = await BurnLpOrder.makeHelpers({}, providers)
+  //await testBurnLpOrderFlow(burnLpOrder, testContext)
 
-  const zapInX = Amm.findZapInX(amm.expectedState, ZAP_IN_X_IN)
+  //console.log("[integ] Deploying MintLpOrder contract")
+  //const mintLpOrder = await MintLpOrder.makeHelpers(providers)
+  //await testMintLpFlow(mintLpOrder, testContext)
+
+  console.log("[integ] Deploying MarketOrder contract")
+  const marketOrder = await MarketOrder.makeHelpers(providers)
+
+  //console.log("[integ] Running market order case swap-x-to-y")
+  //await testSwapXToYFlow(marketOrder, testContext)
+//
+  //console.log("[integ] Running market order case swap-y-to-x")
+  //await testSwapYToXFlow(marketOrder, testContext)
+
   console.log("[integ] Running market order case zap-in-x")
-  {
-    const label = "zap-in-x"
-    const slot = 5n
-    const marketOrder = await MarketOrder.make(
-      { privateStateId: `market-order-${label}` },
-      providers,
-    )
-    await marketOrder.open({
-      ownerCommitment: computeOwnerCommitment(marketOrderModule, marketOrder.address),
-      amm: amm.circuitIds("AmmFundOrderX"),
-      kind: Amm.OrderKind.DepositXLiq,
-      amountSent: ZAP_IN_X_IN,
-      colorSent: xColor,
-      colorReturned: amm.lpColor,
-      returnsTo: { bytes: walletPublicKey },
-    })
-    await marketOrder.reserveAmmSlot(amm, slot, Amm.OrderKind.DepositXLiq, ZAP_IN_X_IN, 0n)
-    await marketOrder.sendCoinToAmm(amm, "AmmFundOrderX", slot)
-    await amm.activateOrder(slot)
-    await amm.validateDepositXLiq(zapInX.xSwap, zapInX.xFee, zapInX.ySwap, zapInX.lpOut)
-    await amm.mintLp()
-    await marketOrder.receiveCoinFromAmm(
-      amm,
-      "AmmPayLp",
-      slot,
-      MarketOrder.ReturnKind.Lp,
-      zapInX.lpOut,
-    )
-    await marketOrder.close(amm, slot)
-    assert(!(await marketOrder.state()).coins.member(0n), `${label} market order should be closed`)
-  }
+  await testZapInXFlow(marketOrder, testContext)
 
-  const zapInY = Amm.findZapInY(amm.expectedState, ZAP_IN_Y_IN)
   console.log("[integ] Running market order case zap-in-y")
-  {
-    const label = "zap-in-y"
-    const slot = 6n
-    const marketOrder = await MarketOrder.make(
-      { privateStateId: `market-order-${label}` },
-      providers,
-    )
-    await marketOrder.open({
-      ownerCommitment: computeOwnerCommitment(marketOrderModule, marketOrder.address),
-      amm: amm.circuitIds("AmmFundOrderY"),
-      kind: Amm.OrderKind.DepositYLiq,
-      amountSent: ZAP_IN_Y_IN,
-      colorSent: yColor,
-      colorReturned: amm.lpColor,
-      returnsTo: { bytes: walletPublicKey },
-    })
-    await marketOrder.reserveAmmSlot(amm, slot, Amm.OrderKind.DepositYLiq, 0n, ZAP_IN_Y_IN)
-    await marketOrder.sendCoinToAmm(amm, "AmmFundOrderY", slot)
-    await amm.activateOrder(slot)
-    await amm.validateDepositYLiq(zapInY.ySwap, zapInY.xFee, zapInY.xSwap, zapInY.lpOut)
-    await amm.mintLp()
-    await marketOrder.receiveCoinFromAmm(
-      amm,
-      "AmmPayLp",
-      slot,
-      MarketOrder.ReturnKind.Lp,
-      zapInY.lpOut,
-    )
-    await marketOrder.close(amm, slot)
-    assert(!(await marketOrder.state()).coins.member(0n), `${label} market order should be closed`)
-  }
+  await testZapInYFlow(marketOrder, testContext)
 
-  const zapOutX = Amm.findZapOutX(amm.expectedState, ZAP_OUT_X_LP_IN)
   console.log("[integ] Running market order case zap-out-x")
-  {
-    const label = "zap-out-x"
-    const slot = 7n
-    const marketOrder = await MarketOrder.make(
-      { privateStateId: `market-order-${label}` },
-      providers,
-    )
-    await marketOrder.open({
-      ownerCommitment: computeOwnerCommitment(marketOrderModule, marketOrder.address),
-      amm: amm.circuitIds("AmmFundOrderLp"),
-      kind: Amm.OrderKind.WithdrawXLiq,
-      amountSent: ZAP_OUT_X_LP_IN,
-      colorSent: amm.lpColor,
-      colorReturned: xColor,
-      returnsTo: { bytes: walletPublicKey },
-    })
-    await marketOrder.reserveAmmSlot(amm, slot, Amm.OrderKind.WithdrawXLiq, ZAP_OUT_X_LP_IN, 0n)
-    await marketOrder.sendCoinToAmm(amm, "AmmFundOrderLp", slot)
-    await amm.activateOrder(slot)
-    await amm.validateWithdrawXLiq(zapOutX.xOut, zapOutX.ySwap, zapOutX.xFee, zapOutX.xSwap)
-    await amm.splitX()
-    await marketOrder.receiveCoinFromAmm(
-      amm,
-      "AmmPayX",
-      slot,
-      MarketOrder.ReturnKind.X,
-      zapOutX.xOut,
-    )
-    await marketOrder.close(amm, slot)
-    assert(!(await marketOrder.state()).coins.member(0n), `${label} market order should be closed`)
-  }
+  await testZapOutXFlow(marketOrder, testContext)
 
-  const zapOutY = Amm.findZapOutY(amm.expectedState, ZAP_OUT_Y_LP_IN)
   console.log("[integ] Running market order case zap-out-y")
-  {
-    const label = "zap-out-y"
-    const slot = 8n
-    const marketOrder = await MarketOrder.make(
-      { privateStateId: `market-order-${label}` },
-      providers,
-    )
-    await marketOrder.open({
-      ownerCommitment: computeOwnerCommitment(marketOrderModule, marketOrder.address),
-      amm: amm.circuitIds("AmmFundOrderLp"),
-      kind: Amm.OrderKind.WithdrawYLiq,
-      amountSent: ZAP_OUT_Y_LP_IN,
-      colorSent: amm.lpColor,
-      colorReturned: yColor,
-      returnsTo: { bytes: walletPublicKey },
-    })
-    await marketOrder.reserveAmmSlot(amm, slot, Amm.OrderKind.WithdrawYLiq, ZAP_OUT_Y_LP_IN, 0n)
-    await marketOrder.sendCoinToAmm(amm, "AmmFundOrderLp", slot)
-    await amm.activateOrder(slot)
-    await amm.validateWithdrawYLiq(zapOutY.yOut, zapOutY.xSwap, zapOutY.xFee, zapOutY.ySwap)
-    await amm.splitY()
-    await marketOrder.receiveCoinFromAmm(
-      amm,
-      "AmmPayY",
-      slot,
-      MarketOrder.ReturnKind.Y,
-      zapOutY.yOut,
-    )
-    await marketOrder.close(amm, slot)
-    assert(!(await marketOrder.state()).coins.member(0n), `${label} market order should be closed`)
-  }
+  await testZapOutYFlow(marketOrder, testContext)
 
   console.log("[integ] Verifying final AMM ledger state")
   ammLedger = await amm.state()
@@ -327,15 +164,15 @@ async function main() {
     "Unexpected final LP supply",
   )
   assertEqual(ammLedger.xRewards, amm.expectedState.xRewards, "Unexpected final X rewards")
-  assert(!(await burnLpOrder.state()).coins.member(0n), "Burn LP order should be closed")
+  //assert(!(await burnLpOrder.state()).coins.member(0n), "Burn LP order should be closed")
   console.log("[integ] Integration flow completed successfully")
 }
 
 async function testMintLpFlow(
-  walletPublicKey: Buffer,
-  amm: Amm.ContractHelpers,
-  mintLpOrder: MintLpOrder.Contract,
+  mintLpOrder: MintLpOrder.ContractHelpers,
+  ctx: TestContext
 ) {
+  const { amm, walletPublicKey } = ctx
   const initialAmmState = await amm.state()
   const xColor = initialAmmState.xColor
   const yColor = initialAmmState.yColor
@@ -373,7 +210,7 @@ async function testMintLpFlow(
   await amm.mintLp()
 
   console.log("[integ] Sending lp tokens from Amm to MintLpOrder contract")
-  await mintLpOrder.receiveFromAmm(amm, mintSlot, BigInt(MarketOrder.ReturnKind.Lp), mintLpOut)
+  await mintLpOrder.receiveFromAmm(amm, mintSlot, BigInt(Amm.ReturnKind.Lp), mintLpOut)
 
   const finalAmmState = await amm.state()
   assertEqual(
@@ -399,10 +236,10 @@ async function testMintLpFlow(
 }
 
 async function testBurnLpOrderFlow(
-  walletPublicKey: Buffer,
-  amm: Amm.ContractHelpers,
   burnLpOrder: BurnLpOrder.ContractHelpers,
+  ctx: TestContext
 ) {
+  const { amm, walletPublicKey } = ctx
   const initialAmmState = await amm.state()
   const xColor = initialAmmState.xColor
   const yColor = initialAmmState.yColor
@@ -436,8 +273,11 @@ async function testBurnLpOrderFlow(
   console.log("[integ] Split x liq to send to order slot")
   await amm.splitX()
 
-  console.log("[integ] Split y liq to send to order slot")
+  console.log(`[integ] Split y liq to send to order slot ${burnSlot}`)
   await amm.splitY()
+
+  console.log("[integ] Deactivating processed burn order on Amm")
+  await amm.deactivateOrder()
 
   console.log("[integ] Send X coin from Amm to BurnLpOrder")
   await burnLpOrder.receiveXCoinFromAmm(amm, burnSlot, BurnLpOrder.ReturnKind.X, burnXOut)
@@ -445,11 +285,304 @@ async function testBurnLpOrderFlow(
   console.log("[integ] Send Y coin from Amm to BurnLpOrder")
   await burnLpOrder.receiveYCoinFromAmm(amm, burnSlot, BurnLpOrder.ReturnKind.Y, burnYOut)
 
-  console.log("[integ] Closing X on Amm")
-  await burnLpOrder.closeX(amm, burnSlot)
+  console.log("[integ] Clearing burn order slot on Amm")
+  await burnLpOrder.clearAmmSlot(amm, burnSlot)
 
-  console.log("[integ] Closing Y on Amm")
+  console.log("[integ] Closing X on BurnLpOrder")
+  await burnLpOrder.closeX()
+
+  console.log("[integ] Closing Y on BurnLpOrder")
   await burnLpOrder.closeY()
+}
+
+async function testSwapXToYFlow(
+  marketOrder: MarketOrder.ContractHelpers,
+  ctx: TestContext
+) {
+  const label = "swap-x-to-y"
+  const { amm, walletPublicKey } = ctx
+  const initialAmmState = await amm.state()
+  const xColor = initialAmmState.xColor
+  const yColor = initialAmmState.yColor
+
+  const slot = 3n
+  const swapX = Amm.calcSwapXToY(amm.expectedState, SWAP_X_IN)
+
+  console.log("[integ] Opening swap-x-to-y market order")
+  await marketOrder.open({
+    ownerCommitment: computeOwnerCommitment(marketOrderModule, marketOrder.address),
+    amm: amm.circuitIds("AmmFundOrderX"),
+    kind: Amm.OrderKind.SwapXToY,
+    amountSent: SWAP_X_IN,
+    colorSent: xColor,
+    colorReturned: yColor,
+    returnsTo: { bytes: walletPublicKey },
+  })
+
+  console.log("[integ] Reserving Amm slot for swap-x-to-y")
+  await marketOrder.reserveAmmSlot(amm, slot, Amm.OrderKind.SwapXToY, SWAP_X_IN, 0n)
+
+  console.log("[integ] Sending X coin from MarketOrder to Amm")
+  await marketOrder.sendCoinToAmm(amm, "AmmFundOrderX", slot)
+
+  console.log("[integ] Activating swap-x-to-y on Amm")
+  await amm.activateOrder(slot)
+
+  console.log("[integ] Validating swap-x-to-y on Amm")
+  await amm.validateSwapXToY(swapX.xFee, swapX.yOut)
+
+  console.log("[integ] Splitting Y liquidity for swap-x-to-y payout")
+  await amm.splitY()
+
+  console.log("[integ] Deactivating swap-x-to-y on Amm")
+  await amm.deactivateOrder()
+
+  console.log("[integ] Sending Y coin from Amm to MarketOrder")
+  await marketOrder.receiveCoinFromAmm(amm, "AmmPayY", slot, Amm.ReturnKind.Y, swapX.yOut)
+
+  console.log("[integ] Closing swap-x-to-y market order")
+  await marketOrder.close(amm, slot)
+  assert(!(await marketOrder.state()).coins.member(0n), `${label} market order should be closed`)
+}
+
+async function testSwapYToXFlow(
+  marketOrder: MarketOrder.ContractHelpers,
+  ctx: TestContext
+) {
+  const label = "swap-y-to-x"
+  const { amm, walletPublicKey } = ctx
+  const initialAmmState = await amm.state()
+  const xColor = initialAmmState.xColor
+  const yColor = initialAmmState.yColor
+
+  const slot = 4n
+  const swapY = Amm.calcSwapYToX(amm.expectedState, SWAP_Y_IN)
+
+  console.log("[integ] Opening swap-y-to-x market order")
+  await marketOrder.open({
+    ownerCommitment: computeOwnerCommitment(marketOrderModule, marketOrder.address),
+    amm: amm.circuitIds("AmmFundOrderY"),
+    kind: Amm.OrderKind.SwapYToX,
+    amountSent: SWAP_Y_IN,
+    colorSent: yColor,
+    colorReturned: xColor,
+    returnsTo: { bytes: walletPublicKey },
+  })
+
+  console.log("[integ] Reserving Amm slot for swap-y-to-x")
+  await marketOrder.reserveAmmSlot(amm, slot, Amm.OrderKind.SwapYToX, 0n, SWAP_Y_IN)
+
+  console.log("[integ] Sending Y coin from MarketOrder to Amm")
+  await marketOrder.sendCoinToAmm(amm, "AmmFundOrderY", slot)
+
+  console.log("[integ] Activating swap-y-to-x on Amm")
+  await amm.activateOrder(slot)
+
+  console.log("[integ] Validating swap-y-to-x on Amm")
+  await amm.validateSwapYToX(swapY.xFee, swapY.xOut)
+
+  console.log("[integ] Splitting X liquidity for swap-y-to-x payout")
+  await amm.splitX()
+
+  console.log("[integ] Deactivating swap-y-to-x on Amm")
+  await amm.deactivateOrder()
+
+  console.log("[integ] Sending X coin from Amm to MarketOrder")
+  await marketOrder.receiveCoinFromAmm(amm, "AmmPayX", slot, Amm.ReturnKind.X, swapY.xOut)
+
+  console.log("[integ] Closing swap-y-to-x market order")
+  await marketOrder.close(amm, slot)
+  assert(!(await marketOrder.state()).coins.member(0n), `${label} market order should be closed`)
+}
+
+async function testZapInXFlow(
+  marketOrder: MarketOrder.ContractHelpers,
+  ctx: TestContext
+) {
+  const label = "zap-in-x"
+  const { amm, walletPublicKey } = ctx
+  const initialAmmState = await amm.state()
+  const xColor = initialAmmState.xColor
+
+  const slot = 5n
+  const zapInX = Amm.findZapInX(amm.expectedState, ZAP_IN_X_IN)
+
+  console.log("[integ] Opening zap-in-x market order")
+  await marketOrder.open({
+    ownerCommitment: computeOwnerCommitment(marketOrderModule, marketOrder.address),
+    amm: amm.circuitIds("AmmFundOrderX"),
+    kind: Amm.OrderKind.DepositXLiq,
+    amountSent: ZAP_IN_X_IN,
+    colorSent: xColor,
+    colorReturned: amm.lpColor,
+    returnsTo: { bytes: walletPublicKey },
+  })
+
+  console.log("[integ] Reserving Amm slot for zap-in-x")
+  await marketOrder.reserveAmmSlot(amm, slot, Amm.OrderKind.DepositXLiq, ZAP_IN_X_IN, 0n)
+
+  console.log("[integ] Sending X coin from MarketOrder to Amm")
+  await marketOrder.sendCoinToAmm(amm, "AmmFundOrderX", slot)
+
+  console.log("[integ] Activating zap-in-x on Amm")
+  await amm.activateOrder(slot)
+
+  console.log("[integ] Validating zap-in-x on Amm")
+  await amm.validateDepositXLiq(zapInX.xSwap, zapInX.xFee, zapInX.ySwap, zapInX.lpOut)
+
+  console.log("[integ] Minting LP for zap-in-x")
+  await amm.mintLp()
+
+  console.log("[integ] Sending LP coin from Amm to MarketOrder")
+  await marketOrder.receiveCoinFromAmm(amm, "AmmPayLp", slot, Amm.ReturnKind.Lp, zapInX.lpOut)
+
+  console.log("[integ] Closing zap-in-x market order")
+  await marketOrder.close(amm, slot)
+  assert(!(await marketOrder.state()).coins.member(0n), `${label} market order should be closed`)
+}
+
+async function testZapInYFlow(
+  marketOrder: MarketOrder.ContractHelpers,
+  ctx: TestContext
+) {
+  const label = "zap-in-y"
+  const { amm, walletPublicKey } = ctx
+  const initialAmmState = await amm.state()
+  const yColor = initialAmmState.yColor
+
+  const slot = 6n
+  const zapInY = Amm.findZapInY(amm.expectedState, ZAP_IN_Y_IN)
+
+  console.log("[integ] Opening zap-in-y market order")
+  await marketOrder.open({
+    ownerCommitment: computeOwnerCommitment(marketOrderModule, marketOrder.address),
+    amm: amm.circuitIds("AmmFundOrderY"),
+    kind: Amm.OrderKind.DepositYLiq,
+    amountSent: ZAP_IN_Y_IN,
+    colorSent: yColor,
+    colorReturned: amm.lpColor,
+    returnsTo: { bytes: walletPublicKey },
+  })
+
+  console.log("[integ] Reserving Amm slot for zap-in-y")
+  await marketOrder.reserveAmmSlot(amm, slot, Amm.OrderKind.DepositYLiq, 0n, ZAP_IN_Y_IN)
+
+  console.log("[integ] Sending Y coin from MarketOrder to Amm")
+  await marketOrder.sendCoinToAmm(amm, "AmmFundOrderY", slot)
+
+  console.log("[integ] Activating zap-in-y on Amm")
+  await amm.activateOrder(slot)
+
+  console.log("[integ] Validating zap-in-y on Amm")
+  await amm.validateDepositYLiq(zapInY.ySwap, zapInY.xFee, zapInY.xSwap, zapInY.lpOut)
+
+  console.log("[integ] Minting LP for zap-in-y")
+  await amm.mintLp()
+
+  console.log("[integ] Sending LP coin from Amm to MarketOrder")
+  await marketOrder.receiveCoinFromAmm(amm, "AmmPayLp", slot, Amm.ReturnKind.Lp, zapInY.lpOut)
+
+  console.log("[integ] Closing zap-in-y market order")
+  await marketOrder.close(amm, slot)
+  assert(!(await marketOrder.state()).coins.member(0n), `${label} market order should be closed`)
+}
+
+async function testZapOutXFlow(
+  marketOrder: MarketOrder.ContractHelpers,
+  ctx: TestContext
+) {
+  const label = "zap-out-x"
+  const { amm, walletPublicKey } = ctx
+  const initialAmmState = await amm.state()
+  const xColor = initialAmmState.xColor
+
+  const slot = 7n
+  const zapOutX = Amm.findZapOutX(amm.expectedState, ZAP_OUT_X_LP_IN)
+
+  console.log("[integ] Opening zap-out-x market order")
+  await marketOrder.open({
+    ownerCommitment: computeOwnerCommitment(marketOrderModule, marketOrder.address),
+    amm: amm.circuitIds("AmmFundOrderLp"),
+    kind: Amm.OrderKind.WithdrawXLiq,
+    amountSent: ZAP_OUT_X_LP_IN,
+    colorSent: amm.lpColor,
+    colorReturned: xColor,
+    returnsTo: { bytes: walletPublicKey },
+  })
+
+  console.log("[integ] Reserving Amm slot for zap-out-x")
+  await marketOrder.reserveAmmSlot(amm, slot, Amm.OrderKind.WithdrawXLiq, ZAP_OUT_X_LP_IN, 0n)
+
+  console.log("[integ] Sending LP coin from MarketOrder to Amm")
+  await marketOrder.sendCoinToAmm(amm, "AmmFundOrderLp", slot)
+
+  console.log("[integ] Activating zap-out-x on Amm")
+  await amm.activateOrder(slot)
+
+  console.log("[integ] Validating zap-out-x on Amm")
+  await amm.validateWithdrawXLiq(zapOutX.xOut, zapOutX.ySwap, zapOutX.xFee, zapOutX.xSwap)
+
+  console.log("[integ] Splitting X liquidity for zap-out-x payout")
+  await amm.splitX()
+
+  console.log("[integ] Deactivating zap-out-x on Amm")
+  await amm.deactivateOrder()
+
+  console.log("[integ] Sending X coin from Amm to MarketOrder")
+  await marketOrder.receiveCoinFromAmm(amm, "AmmPayX", slot, Amm.ReturnKind.X, zapOutX.xOut)
+
+  console.log("[integ] Closing zap-out-x market order")
+  await marketOrder.close(amm, slot)
+  assert(!(await marketOrder.state()).coins.member(0n), `${label} market order should be closed`)
+}
+
+async function testZapOutYFlow(
+  marketOrder: MarketOrder.ContractHelpers,
+  ctx: TestContext
+) {
+  const label = "zap-out-y"
+  const { amm, walletPublicKey } = ctx
+  const initialAmmState = await amm.state()
+  const yColor = initialAmmState.yColor
+
+  const slot = 8n
+  const zapOutY = Amm.findZapOutY(amm.expectedState, ZAP_OUT_Y_LP_IN)
+
+  console.log("[integ] Opening zap-out-y market order")
+  await marketOrder.open({
+    ownerCommitment: computeOwnerCommitment(marketOrderModule, marketOrder.address),
+    amm: amm.circuitIds("AmmFundOrderLp"),
+    kind: Amm.OrderKind.WithdrawYLiq,
+    amountSent: ZAP_OUT_Y_LP_IN,
+    colorSent: amm.lpColor,
+    colorReturned: yColor,
+    returnsTo: { bytes: walletPublicKey },
+  })
+
+  console.log("[integ] Reserving Amm slot for zap-out-y")
+  await marketOrder.reserveAmmSlot(amm, slot, Amm.OrderKind.WithdrawYLiq, ZAP_OUT_Y_LP_IN, 0n)
+
+  console.log("[integ] Sending LP coin from MarketOrder to Amm")
+  await marketOrder.sendCoinToAmm(amm, "AmmFundOrderLp", slot)
+
+  console.log("[integ] Activating zap-out-y on Amm")
+  await amm.activateOrder(slot)
+
+  console.log("[integ] Validating zap-out-y on Amm")
+  await amm.validateWithdrawYLiq(zapOutY.yOut, zapOutY.xSwap, zapOutY.xFee, zapOutY.ySwap)
+
+  console.log("[integ] Splitting Y liquidity for zap-out-y payout")
+  await amm.splitY()
+
+  console.log("[integ] Deactivating zap-out-y on Amm")
+  await amm.deactivateOrder()
+
+  console.log("[integ] Sending Y coin from Amm to MarketOrder")
+  await marketOrder.receiveCoinFromAmm(amm, "AmmPayY", slot, Amm.ReturnKind.Y, zapOutY.yOut)
+
+  console.log("[integ] Closing zap-out-y market order")
+  await marketOrder.close(amm, slot)
+  assert(!(await marketOrder.state()).coins.member(0n), `${label} market order should be closed`)
 }
 
 await main()

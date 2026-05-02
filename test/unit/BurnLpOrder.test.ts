@@ -23,11 +23,44 @@ describe("BurnLpOrder", () => {
 
     expect(() => simulator.sendToAmm()).toThrow(/Unexpected BurnLpOrder state/)
     expect(() => simulator.receiveXFromAmm()).toThrow(/Unexpected BurnLpOrder state/)
-    expect(() => simulator.close()).toThrow(/Can only be performed by the order owner/)
+    expect(() => simulator.clearAmmSlot()).toThrow(/Unexpected BurnLpOrder state/)
+    expect(() => simulator.close()).toThrow(/Unexpected BurnLpOrder state/)
 
     simulator.openOrder()
     expect(() => simulator.openOrder()).toThrow(/BurnLpOrder already occupied/)
     expect(() => simulator.receiveXFromAmm()).toThrow(/Unexpected BurnLpOrder state/)
+    expect(() => simulator.clearAmmSlot()).toThrow(/Unexpected BurnLpOrder state/)
+  })
+
+  it("clears the AMM slot without moving returned coins", () => {
+    const simulator = new BurnLpOrderSimulator()
+    simulator.openOrder()
+    simulator.sendToAmm()
+    simulator.receiveXFromAmm()
+    simulator.receiveYFromAmm()
+
+    const cleared = simulator.clearAmmSlot()
+
+    expect(simulator.currentLedger().state).toBe(4)
+    expect(simulator.currentLedger().coins.lookup(0n).value).toBe(burnLpXReturnedValue)
+    expect(simulator.currentLedger().coins.lookup(2n).value).toBe(burnLpYReturnedValue)
+    expect(
+      cleared.context.currentQueryContext.effects.claimedContractCalls.map((call) => call[2]),
+    ).toContain(Buffer.from(burnLpAmmClearOrderCircuitHash).toString("hex"))
+  })
+
+  it("requires the AMM slot to be cleared before closing X", () => {
+    const simulator = new BurnLpOrderSimulator()
+    simulator.openOrder()
+    simulator.sendToAmm()
+    simulator.receiveXFromAmm()
+    simulator.receiveYFromAmm()
+
+    expect(() => simulator.closeX()).toThrow(/Unexpected BurnLpOrder state/)
+
+    simulator.clearAmmSlot()
+    expect(() => simulator.closeX()).not.toThrow()
+    expect(simulator.currentLedger().state).toBe(5)
   })
 
   it("opens, sends, receives X and Y, and closes", () => {
@@ -65,11 +98,14 @@ describe("BurnLpOrder", () => {
     expect(simulator.currentLedger().coins.lookup(0n).value).toBe(burnLpXReturnedValue)
     expect(simulator.currentLedger().coins.lookup(2n).value).toBe(burnLpYReturnedValue)
 
-    expect(() => simulator.close({ sender: burnLpOtherUser, secret: burnLpOtherSecret })).toThrow(
+    simulator.clearAmmSlot()
+
+    expect(() => simulator.closeX({ sender: burnLpOtherUser, secret: burnLpOtherSecret })).toThrow(
       /Can only be performed by the order owner/,
     )
 
-    const closed = simulator.close()
+    simulator.closeX()
+    const closed = simulator.closeY()
     expect(simulator.currentLedger().state).toBe(0)
     expect(simulator.currentLedger().coins.isEmpty()).toBe(true)
     expect(closed.context.currentZswapLocalState.outputs[0].coinInfo.value).toBe(
@@ -90,6 +126,6 @@ describe("BurnLpOrder", () => {
     expect(() => simulator.receiveXFromAmm({ amount: 1n, coinIndex: 1n })).toThrow(
       /Second pos already occupied/,
     )
-    expect(() => simulator.close()).toThrow(/Spam coin not merged/)
+    expect(() => simulator.clearAmmSlot()).toThrow(/Spam coin not merged/)
   })
 })

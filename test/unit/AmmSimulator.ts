@@ -225,6 +225,7 @@ export class AmmSimulator {
 
       result = this.contract.circuits.AmmSplitY(this.makeContext())
       this.commit(result.context)
+      this.deactivateOrder()
       this.payX(defaultSlot)
       this.payY(defaultSlot)
       this.clearOrder(defaultSlot)
@@ -247,6 +248,7 @@ export class AmmSimulator {
 
       result = this.contract.circuits.AmmSplitY(this.makeContext())
       this.commit(result.context)
+      this.deactivateOrder()
       this.payY(defaultSlot)
       this.clearOrder(defaultSlot)
 
@@ -272,6 +274,7 @@ export class AmmSimulator {
 
       result = this.contract.circuits.AmmSplitX(this.makeContext())
       this.commit(result.context)
+      this.deactivateOrder()
       this.payX(defaultSlot)
       this.clearOrder(defaultSlot)
 
@@ -392,6 +395,7 @@ export class AmmSimulator {
 
       result = this.contract.circuits.AmmSplitX(this.makeContext())
       this.commit(result.context)
+      this.deactivateOrder()
       this.payX(defaultSlot)
       this.clearOrder(defaultSlot)
     })
@@ -428,6 +432,7 @@ export class AmmSimulator {
 
       result = this.contract.circuits.AmmSplitY(this.makeContext())
       this.commit(result.context)
+      this.deactivateOrder()
       this.payY(defaultSlot)
       this.clearOrder(defaultSlot)
     })
@@ -649,6 +654,12 @@ export class AmmSimulator {
 
   sendY() {
     const { context } = this.contract.circuits.AmmSplitY(this.makeContext())
+
+    this.commit(context)
+  }
+
+  deactivateOrder() {
+    const { context } = this.contract.circuits.AmmDeactivateOrder(this.makeContext())
 
     this.commit(context)
   }

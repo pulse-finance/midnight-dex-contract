@@ -9,7 +9,8 @@ import "./Common";
 enum ActiveOrderState {
     Unvalidated,
     Validated,
-    PaidX
+    SplitX,
+    SplitY // SplitY is quite expensive and doesn't seem to allow 3 map inserts in the same tx
 }
 
 /**
@@ -376,7 +377,6 @@ export circuit AmmActivateOrder(slot_: Uint<14>): [] {
     }
     
     updateOrderState(slot, order, AmmOrderState.Active);
-
     active = some<ActiveOrder>(ActiveOrder{
         slot,
         order.kind,
@@ -904,25 +904,16 @@ export circuit AmmSplitX(): [] {
     );
 
     coins.insertCoin(order.slot*4, sendXResult.sent, contractAddress);
+    assert(sendXResult.change.is_some, "Some changes expected");
+    coins.insertCoin(0, sendXResult.change.value, contractAddress);
 
-    if (sendXResult.change.is_some) {
-        coins.insertCoin(0, sendXResult.change.value, contractAddress);
-    } else {
-        coins.remove(0);
-    }
-
-    if (order.kind == AmmOrderKind.WithdrawXYLiq) {
-        active = some<ActiveOrder>(ActiveOrder{
-            order.slot,
-            order.kind,
-            ActiveOrderState.PaidX,
-            order.sndAmount,
-            0
-        });
-    } else {
-        active = none<ActiveOrder>();
-        updateSlotState(order.slot, AmmOrderState.Processed);
-    }
+    active = some<ActiveOrder>(ActiveOrder{
+        order.slot,
+        order.kind,
+        ActiveOrderState.SplitX,
+        order.sndAmount,
+        0
+    });
 }
 
 /**
@@ -934,7 +925,7 @@ export circuit AmmSplitY(): [] {
     const order = activeOrder();
 
     if (order.kind == AmmOrderKind.WithdrawXYLiq) {
-        assert(order.state == ActiveOrderState.PaidX, "Must pay X before paying Y");
+        assert(order.state == ActiveOrderState.SplitX, "Must pay X before paying Y");
     } else {
         assert(
             (order.kind == AmmOrderKind.SwapXToY) ||
@@ -957,14 +948,34 @@ export circuit AmmSplitY(): [] {
         yOut
     );
 
-    coins.insertCoin(order.slot*4+2, sendYResult.sent, contractAddress);
+    const dstPos = order.slot*4+2;
+    coins.insertCoin(dstPos, sendYResult.sent, contractAddress);
 
-    if (sendYResult.change.is_some) {
-        coins.insertCoin(2, sendYResult.change.value, contractAddress);
-    } else {
-        coins.remove(2);
-    }
+    assert(sendYResult.change.is_some, "Some change expected"); // eliminating this would require us to check content of position 3 as well
+    coins.insertCoin(2, sendYResult.change.value, contractAddress);
 
+    active = some<ActiveOrder>(ActiveOrder{
+        order.slot,
+        order.kind,
+        ActiveOrderState.SplitY,
+        0,
+        0
+    });
+}
+
+/**
+ * A bit too expensive to do this as part of AmmSplitY (and for consistency this has been moved out of AmmSplitX as well)
+ */
+export circuit AmmDeactivateOrder(): [] {
+    const order = activeOrder();
+
+    assert(
+        (order.state == ActiveOrderState.SplitX) ||
+        (order.state == ActiveOrderState.SplitY),
+        "Unexpected order state"
+    );
+    assert(order.fstAmount == 0, "Outstanding payment");
+    
     active = none<ActiveOrder>();
     updateSlotState(order.slot, AmmOrderState.Processed);
 }

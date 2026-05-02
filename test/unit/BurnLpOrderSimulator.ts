@@ -216,16 +216,48 @@ export class BurnLpOrderSimulator {
   close({
     sender = burnLpOwner,
     secret = burnLpOwnerSecret,
-    ammTick = 1n,
     ammTickRnd = burnLpTickCallOpening,
   } = {}) {
     const contract =
       secret === burnLpOwnerSecret ? this.contract : BurnLpOrderSimulator.makeContract(secret)
-    let result = contract.circuits.BurnLpOrderCloseX(this.makeContext(sender), ammTickRnd)
+    let result = contract.circuits.BurnLpOrderClearAmmSlot(this.makeContext(sender), ammTickRnd)
     this.commit(result.context)
-    if (this.currentLedger().state === 4 && this.currentLedger().coins.member(2n)) {
+    result = contract.circuits.BurnLpOrderCloseX(this.makeContext(sender))
+    this.commit(result.context)
+    if (this.currentLedger().state === 5 && this.currentLedger().coins.member(2n)) {
       result = contract.circuits.BurnLpOrderCloseY(this.makeContext(sender))
+      this.commit(result.context)
     }
+
+    return result
+  }
+
+  clearAmmSlot({
+    sender = burnLpOwner,
+    secret = burnLpOwnerSecret,
+    ammTickRnd = burnLpTickCallOpening,
+  } = {}) {
+    const contract =
+      secret === burnLpOwnerSecret ? this.contract : BurnLpOrderSimulator.makeContract(secret)
+    const result = contract.circuits.BurnLpOrderClearAmmSlot(this.makeContext(sender), ammTickRnd)
+
+    this.commit(result.context)
+    return result
+  }
+
+  closeX({ sender = burnLpOwner, secret = burnLpOwnerSecret } = {}) {
+    const contract =
+      secret === burnLpOwnerSecret ? this.contract : BurnLpOrderSimulator.makeContract(secret)
+    const result = contract.circuits.BurnLpOrderCloseX(this.makeContext(sender))
+
+    this.commit(result.context)
+    return result
+  }
+
+  closeY({ sender = burnLpOwner, secret = burnLpOwnerSecret } = {}) {
+    const contract =
+      secret === burnLpOwnerSecret ? this.contract : BurnLpOrderSimulator.makeContract(secret)
+    const result = contract.circuits.BurnLpOrderCloseY(this.makeContext(sender))
 
     this.commit(result.context)
     return result

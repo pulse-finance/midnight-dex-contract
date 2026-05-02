@@ -65,7 +65,7 @@ describe("MintLpOrder", () => {
     expect(Buffer.from(mintLpAmmFundOrderXCircuitHash).length).toBe(32)
   })
 
-  it("receives LP but close currently requires SentX state", () => {
+  it("receives LP and closes", () => {
     const simulator = new MintLpOrderSimulator()
     simulator.openOrder()
     simulator.sendToAmm()
@@ -75,7 +75,9 @@ describe("MintLpOrder", () => {
     expect(() => simulator.close({ sender: mintLpOtherUser, secret: mintLpOtherSecret })).toThrow(
       /Can only be performed by the order owner/,
     )
-    expect(() => simulator.close()).toThrow(/Unexpected MintLpOrder state/)
+    expect(() => simulator.close()).not.toThrow()
+    expect(simulator.currentLedger().state).toBe(0)
+    expect(simulator.currentLedger().coins.isEmpty()).toBe(true)
     expect(Buffer.from(mintLpAmmClearOrderCircuitHash).length).toBe(32)
   })
 })
