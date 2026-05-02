@@ -294,6 +294,7 @@ export class ContractHelpers {
   readonly fullBalanceEndpoints: CircuitCallTxInterface<AmmInstance>
   readonly lpColor: Uint8Array
   expectedState: Parameters = {
+    initialized: false,
     feeBps: AMM_FEE_BPS,
     xLiquidity: 0n,
     yLiquidity: 0n,
@@ -351,6 +352,7 @@ export class ContractHelpers {
     const result = await this.fullBalanceEndpoints.AmmInitXYLiq(xLiq, yLiq, lpOut, returnsTo)
     this.expectedState = {
       ...this.expectedState,
+      initialized: true,
       xLiquidity: this.expectedState.xLiquidity + xLiq,
       yLiquidity: this.expectedState.yLiquidity + yLiq,
       lpCirculatingSupply: this.expectedState.lpCirculatingSupply + lpOut,
@@ -530,6 +532,14 @@ export class ContractHelpers {
     return this.endpoints.AmmSplitY
   }
 
+  async mergeX() {
+    return await this.endpoints.AmmMergeCoins(0n)
+  }
+
+  async mergeY() {
+    return await this.endpoints.AmmMergeCoins(1n)
+  }
+
   get deactivateOrder() {
     return this.endpoints.AmmDeactivateOrder
   }
@@ -617,11 +627,11 @@ export function calcSwapXToY(
   state: Pick<Parameters, "feeBps" | "xLiquidity" | "yLiquidity">,
   xIn: bigint,
 ) {
-  const xFee = (xIn * state.feeBps + 9999n) / 10000n
+  const xFee = calcSwapXToYFee(state.feeBps, xIn)
   const yOut =
     state.yLiquidity -
-    (state.xLiquidity * state.yLiquidity + (state.xLiquidity + xIn - xFee) - 1n) /
-      (state.xLiquidity + xIn - xFee)
+    (state.xLiquidity * state.yLiquidity) / (state.xLiquidity + xIn - xFee) -
+    1n
   return { xFee, yOut }
 }
 
@@ -629,24 +639,35 @@ export function calcSwapYToX(
   state: Pick<Parameters, "feeBps" | "xLiquidity" | "yLiquidity">,
   yIn: bigint,
 ) {
-  const xOutAndFee =
-    state.xLiquidity -
-    (state.xLiquidity * state.yLiquidity + (state.yLiquidity + yIn) - 1n) / (state.yLiquidity + yIn)
-  const xOut = (xOutAndFee * (10000n - state.feeBps)) / 10000n
-  const xFee = xOutAndFee - xOut
+  const initialK = state.xLiquidity * state.yLiquidity
+  const newYLiquidity = state.yLiquidity + yIn
+  let xOut = state.xLiquidity - initialK / newYLiquidity - 1n
+
+  while (xOut > 0n) {
+    const xFee = calcSwapYToXFee(state.feeBps, xOut)
+    const newXLiquidity = state.xLiquidity - xOut - xFee
+
+    if (newXLiquidity * newYLiquidity > initialK) {
+      return { xFee, xOut }
+    }
+
+    xOut -= 1n
+  }
+
+  const xFee = calcSwapYToXFee(state.feeBps, 0n)
   return { xFee, xOut }
 }
 
 export function calcLpOut(state: Parameters, xIn: bigint, yIn: bigint) {
-  const byX = (xIn * state.lpCirculatingSupply) / state.xLiquidity
-  const byY = (yIn * state.lpCirculatingSupply) / state.yLiquidity
+  const byX = (xIn * state.lpCirculatingSupply - 1n) / state.xLiquidity
+  const byY = (yIn * state.lpCirculatingSupply - 1n) / state.yLiquidity
   return byX < byY ? byX : byY
 }
 
 export function calcWithdrawXY(state: Parameters, lpIn: bigint) {
   return {
-    xOut: (lpIn * state.xLiquidity) / state.lpCirculatingSupply,
-    yOut: (lpIn * state.yLiquidity) / state.lpCirculatingSupply,
+    xOut: (lpIn * state.xLiquidity - 1n) / state.lpCirculatingSupply,
+    yOut: (lpIn * state.yLiquidity - 1n) / state.lpCirculatingSupply,
   }
 }
 
@@ -663,9 +684,9 @@ export function findZapInX(state: Parameters, xIn: bigint) {
     ) {
       continue
     }
-    const lpOut = (xAdded * state.lpCirculatingSupply) / xLiqAfterSwap
+    const lpOut = (xAdded * state.lpCirculatingSupply - 1n) / xLiqAfterSwap
     if (
-      lpOut * xLiqAfterSwap <= xAdded * state.lpCirculatingSupply &&
+      lpOut * xLiqAfterSwap < xAdded * state.lpCirculatingSupply &&
       (lpOut + 1n) * xLiqAfterSwap >= xAdded * state.lpCirculatingSupply
     ) {
       return { xSwap, xFee, ySwap, lpOut }
@@ -687,9 +708,9 @@ export function findZapInY(state: Parameters, yIn: bigint) {
     ) {
       continue
     }
-    const lpOut = (yAdded * state.lpCirculatingSupply) / yLiqAfterSwap
+    const lpOut = (yAdded * state.lpCirculatingSupply - 1n) / yLiqAfterSwap
     if (
-      lpOut * yLiqAfterSwap <= yAdded * state.lpCirculatingSupply &&
+      lpOut * yLiqAfterSwap < yAdded * state.lpCirculatingSupply &&
       (lpOut + 1n) * yLiqAfterSwap >= yAdded * state.lpCirculatingSupply
     ) {
       return { ySwap, xFee, xSwap, lpOut }
@@ -704,9 +725,9 @@ export function findZapOutX(state: Parameters, lpIn: bigint) {
   for (let xRemoved = 0n; xRemoved <= maxX; xRemoved += 1n) {
     for (let yRemoved = 0n; yRemoved <= maxY; yRemoved += 1n) {
       if (
-        xRemoved * state.lpCirculatingSupply > lpIn * state.xLiquidity ||
+        xRemoved * state.lpCirculatingSupply >= lpIn * state.xLiquidity ||
         (xRemoved + 1n) * state.lpCirculatingSupply < lpIn * state.xLiquidity ||
-        yRemoved * state.lpCirculatingSupply > lpIn * state.yLiquidity ||
+        yRemoved * state.lpCirculatingSupply >= lpIn * state.yLiquidity ||
         (yRemoved + 1n) * state.lpCirculatingSupply < lpIn * state.yLiquidity
       ) {
         continue
@@ -729,9 +750,9 @@ export function findZapOutY(state: Parameters, lpIn: bigint) {
   for (let xRemoved = 0n; xRemoved <= maxX; xRemoved += 1n) {
     for (let yRemoved = 0n; yRemoved <= maxY; yRemoved += 1n) {
       if (
-        xRemoved * state.lpCirculatingSupply > lpIn * state.xLiquidity ||
+        xRemoved * state.lpCirculatingSupply >= lpIn * state.xLiquidity ||
         (xRemoved + 1n) * state.lpCirculatingSupply < lpIn * state.xLiquidity ||
-        yRemoved * state.lpCirculatingSupply > lpIn * state.yLiquidity ||
+        yRemoved * state.lpCirculatingSupply >= lpIn * state.yLiquidity ||
         (yRemoved + 1n) * state.lpCirculatingSupply < lpIn * state.yLiquidity
       ) {
         continue
@@ -746,4 +767,12 @@ export function findZapOutY(state: Parameters, lpIn: bigint) {
     }
   }
   throw new Error("Failed to derive Y zap-out validation args")
+}
+
+function calcSwapXToYFee(feeBps: bigint, xIn: bigint) {
+  return feeBps === 0n ? 0n : (xIn * feeBps) / 10000n + 1n
+}
+
+function calcSwapYToXFee(feeBps: bigint, xOut: bigint) {
+  return feeBps === 0n ? 0n : (xOut * feeBps) / (10000n - feeBps) + 1n
 }

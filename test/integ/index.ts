@@ -1,5 +1,3 @@
-import { encodeContractAddress } from "@midnight-ntwrk/compact-runtime"
-
 import {
   BURN_LP_IN,
   GENESIS_SEED_HEX,
@@ -26,36 +24,14 @@ import * as Wallet from "./Wallet"
 import { makeShieldedUserAddress } from "./integ-support"
 import { makeMidnightProviders } from "./Providers/MidnightProviders"
 
-import * as mintLpOrderModule from "../../dist/mintlporder/contract"
-import * as burnLpOrderModule from "../../dist/burnlporder/contract"
-import * as marketOrderModule from "../../dist/marketorder/contract"
 import { fromHex } from "@midnight-ntwrk/midnight-js-utils"
-
-type OwnerSecretContext = { privateState: undefined }
-type OwnerSecretWitnesses = {
-  newNonce(context: OwnerSecretContext): [undefined, Uint8Array]
-  ownerSecret(context: OwnerSecretContext): [undefined, Uint8Array]
-}
-type OwnerCommitmentContract = {
-  _persistentHash_1(value: [Uint8Array, Uint8Array]): Uint8Array
-}
-type OwnerCommitmentModule = {
-  Contract: new (witnesses: OwnerSecretWitnesses) => unknown
-}
+import { computeOwnerCommitment } from "../ownerCommitment"
 
 function deterministicNonce(index: number): Uint8Array {
   const bytes = new Uint8Array(32)
   bytes[30] = (index >> 8) & 0xff
   bytes[31] = index & 0xff
   return bytes
-}
-
-function computeOwnerCommitment(contractModule: OwnerCommitmentModule, contractAddress: string) {
-  const contract = new contractModule.Contract({
-    newNonce: (context) => [context.privateState, deterministicNonce(999)],
-    ownerSecret: (context) => [context.privateState, ORDER_OWNER_SECRET],
-  }) as OwnerCommitmentContract
-  return contract._persistentHash_1([encodeContractAddress(contractAddress), ORDER_OWNER_SECRET])
 }
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -75,6 +51,20 @@ type TestContext = {
   walletPublicKey: Buffer
   xColor: Uint8Array
   yColor: Uint8Array
+}
+
+async function mergeAmmTokensIfNeeded(amm: Amm.ContractHelpers) {
+  const ammLedger = await amm.state()
+
+  if (ammLedger.coins.member(1n)) {
+    console.log("[integ] Merging fragmented X liquidity coin on Amm")
+    await amm.mergeX()
+  }
+
+  if (ammLedger.coins.member(3n)) {
+    console.log("[integ] Merging fragmented Y liquidity coin on Amm")
+    await amm.mergeY()
+  }
 }
 
 async function main() {
@@ -177,7 +167,7 @@ async function testMintLpFlow(mintLpOrder: MintLpOrder.ContractHelpers, ctx: Tes
 
   console.log("[integ] Place mint order")
   await mintLpOrder.open({
-    ownerCommitment: computeOwnerCommitment(mintLpOrderModule, mintLpOrder.address),
+    ownerCommitment: computeOwnerCommitment(mintLpOrder.address, ORDER_OWNER_SECRET),
     amm: amm.circuitIds("AmmFundOrderX", "AmmFundOrderY"),
     xAmountSent: MINT_LP_X_IN,
     yAmountSent: MINT_LP_Y_IN,
@@ -231,6 +221,8 @@ async function testMintLpFlow(mintLpOrder: MintLpOrder.ContractHelpers, ctx: Tes
     mintSlot,
     "Mint LP order should retain its AMM slot before close",
   )
+
+  await mergeAmmTokensIfNeeded(amm)
 }
 
 async function testBurnLpOrderFlow(burnLpOrder: BurnLpOrder.ContractHelpers, ctx: TestContext) {
@@ -241,7 +233,7 @@ async function testBurnLpOrderFlow(burnLpOrder: BurnLpOrder.ContractHelpers, ctx
   const { xOut: burnXOut, yOut: burnYOut } = Amm.calcWithdrawXY(amm.expectedState, BURN_LP_IN)
   console.log("[integ] Opening BurnLpOrder")
   await burnLpOrder.open({
-    ownerCommitment: computeOwnerCommitment(burnLpOrderModule, burnLpOrder.address),
+    ownerCommitment: computeOwnerCommitment(burnLpOrder.address, ORDER_OWNER_SECRET),
     amm: amm.circuitIds("AmmFundOrderLp"),
     amountSent: BURN_LP_IN,
     colorSent: amm.lpColor,
@@ -285,6 +277,8 @@ async function testBurnLpOrderFlow(burnLpOrder: BurnLpOrder.ContractHelpers, ctx
 
   console.log("[integ] Closing Y on BurnLpOrder")
   await burnLpOrder.closeY()
+
+  await mergeAmmTokensIfNeeded(amm)
 }
 
 async function testSwapXToYFlow(marketOrder: MarketOrder.ContractHelpers, ctx: TestContext) {
@@ -295,7 +289,7 @@ async function testSwapXToYFlow(marketOrder: MarketOrder.ContractHelpers, ctx: T
 
   console.log("[integ] Opening swap-x-to-y market order")
   await marketOrder.open({
-    ownerCommitment: computeOwnerCommitment(marketOrderModule, marketOrder.address),
+    ownerCommitment: computeOwnerCommitment(marketOrder.address, ORDER_OWNER_SECRET),
     amm: amm.circuitIds("AmmFundOrderX"),
     kind: Amm.OrderKind.SwapXToY,
     amountSent: SWAP_X_IN,
@@ -328,6 +322,8 @@ async function testSwapXToYFlow(marketOrder: MarketOrder.ContractHelpers, ctx: T
   console.log("[integ] Closing swap-x-to-y market order")
   await marketOrder.close(amm, slot)
   assert(!(await marketOrder.state()).coins.member(0n), `swap-x-to-y market order should be closed`)
+
+  await mergeAmmTokensIfNeeded(amm)
 }
 
 async function testSwapYToXFlow(marketOrder: MarketOrder.ContractHelpers, ctx: TestContext) {
@@ -338,7 +334,7 @@ async function testSwapYToXFlow(marketOrder: MarketOrder.ContractHelpers, ctx: T
 
   console.log("[integ] Opening swap-y-to-x market order")
   await marketOrder.open({
-    ownerCommitment: computeOwnerCommitment(marketOrderModule, marketOrder.address),
+    ownerCommitment: computeOwnerCommitment(marketOrder.address, ORDER_OWNER_SECRET),
     amm: amm.circuitIds("AmmFundOrderY"),
     kind: Amm.OrderKind.SwapYToX,
     amountSent: SWAP_Y_IN,
@@ -371,6 +367,8 @@ async function testSwapYToXFlow(marketOrder: MarketOrder.ContractHelpers, ctx: T
   console.log("[integ] Closing swap-y-to-x market order")
   await marketOrder.close(amm, slot)
   assert(!(await marketOrder.state()).coins.member(0n), `swap-y-to-x market order should be closed`)
+
+  await mergeAmmTokensIfNeeded(amm)
 }
 
 async function testZapInXFlow(marketOrder: MarketOrder.ContractHelpers, ctx: TestContext) {
@@ -381,7 +379,7 @@ async function testZapInXFlow(marketOrder: MarketOrder.ContractHelpers, ctx: Tes
 
   console.log("[integ] Opening zap-in-x market order")
   await marketOrder.open({
-    ownerCommitment: computeOwnerCommitment(marketOrderModule, marketOrder.address),
+    ownerCommitment: computeOwnerCommitment(marketOrder.address, ORDER_OWNER_SECRET),
     amm: amm.circuitIds("AmmFundOrderX"),
     kind: Amm.OrderKind.DepositXLiq,
     amountSent: ZAP_IN_X_IN,
@@ -411,6 +409,8 @@ async function testZapInXFlow(marketOrder: MarketOrder.ContractHelpers, ctx: Tes
   console.log("[integ] Closing zap-in-x market order")
   await marketOrder.close(amm, slot)
   assert(!(await marketOrder.state()).coins.member(0n), `zap-in x market order should be closed`)
+
+  await mergeAmmTokensIfNeeded(amm)
 }
 
 async function testZapInYFlow(marketOrder: MarketOrder.ContractHelpers, ctx: TestContext) {
@@ -421,7 +421,7 @@ async function testZapInYFlow(marketOrder: MarketOrder.ContractHelpers, ctx: Tes
 
   console.log("[integ] Opening zap-in-y market order")
   await marketOrder.open({
-    ownerCommitment: computeOwnerCommitment(marketOrderModule, marketOrder.address),
+    ownerCommitment: computeOwnerCommitment(marketOrder.address, ORDER_OWNER_SECRET),
     amm: amm.circuitIds("AmmFundOrderY"),
     kind: Amm.OrderKind.DepositYLiq,
     amountSent: ZAP_IN_Y_IN,
@@ -451,6 +451,8 @@ async function testZapInYFlow(marketOrder: MarketOrder.ContractHelpers, ctx: Tes
   console.log("[integ] Closing zap-in-y market order")
   await marketOrder.close(amm, slot)
   assert(!(await marketOrder.state()).coins.member(0n), `zap-in y market order should be closed`)
+
+  await mergeAmmTokensIfNeeded(amm)
 }
 
 async function testZapOutXFlow(marketOrder: MarketOrder.ContractHelpers, ctx: TestContext) {
@@ -461,7 +463,7 @@ async function testZapOutXFlow(marketOrder: MarketOrder.ContractHelpers, ctx: Te
 
   console.log("[integ] Opening zap-out-x market order")
   await marketOrder.open({
-    ownerCommitment: computeOwnerCommitment(marketOrderModule, marketOrder.address),
+    ownerCommitment: computeOwnerCommitment(marketOrder.address, ORDER_OWNER_SECRET),
     amm: amm.circuitIds("AmmFundOrderLp"),
     kind: Amm.OrderKind.WithdrawXLiq,
     amountSent: ZAP_OUT_X_LP_IN,
@@ -494,6 +496,8 @@ async function testZapOutXFlow(marketOrder: MarketOrder.ContractHelpers, ctx: Te
   console.log("[integ] Closing zap-out-x market order")
   await marketOrder.close(amm, slot)
   assert(!(await marketOrder.state()).coins.member(0n), `zap out x market order should be closed`)
+
+  await mergeAmmTokensIfNeeded(amm)
 }
 
 async function testZapOutYFlow(marketOrder: MarketOrder.ContractHelpers, ctx: TestContext) {
@@ -503,7 +507,7 @@ async function testZapOutYFlow(marketOrder: MarketOrder.ContractHelpers, ctx: Te
 
   console.log("[integ] Opening zap-out-y market order")
   await marketOrder.open({
-    ownerCommitment: computeOwnerCommitment(marketOrderModule, marketOrder.address),
+    ownerCommitment: computeOwnerCommitment(marketOrder.address, ORDER_OWNER_SECRET),
     amm: amm.circuitIds("AmmFundOrderLp"),
     kind: Amm.OrderKind.WithdrawYLiq,
     amountSent: ZAP_OUT_Y_LP_IN,
@@ -536,6 +540,8 @@ async function testZapOutYFlow(marketOrder: MarketOrder.ContractHelpers, ctx: Te
   console.log("[integ] Closing zap-out-y market order")
   await marketOrder.close(amm, slot)
   assert(!(await marketOrder.state()).coins.member(0n), `zap out y market order should be closed`)
+
+  await mergeAmmTokensIfNeeded(amm)
 }
 
 await main()

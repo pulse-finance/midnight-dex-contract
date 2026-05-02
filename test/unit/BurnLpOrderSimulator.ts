@@ -7,6 +7,7 @@ import {
   entryPointHash,
 } from "@midnight-ntwrk/compact-runtime"
 import { Contract, ledger, type Witnesses } from "../../dist/burnlporder/contract/index.js"
+import { computeOwnerCommitment } from "../ownerCommitment"
 
 type CoinInfo = {
   nonce: Uint8Array
@@ -99,11 +100,7 @@ export class BurnLpOrderSimulator {
   }
 
   ownerCommitment() {
-    return (
-      this.contract as Contract & {
-        _persistentHash_1(value: [Uint8Array, Uint8Array]): Uint8Array
-      }
-    )._persistentHash_1([encodeContractAddress(burnLpContractAddress), burnLpOwnerSecret])
+    return computeOwnerCommitment(burnLpContractAddress, burnLpOwnerSecret)
   }
 
   currentLedger() {

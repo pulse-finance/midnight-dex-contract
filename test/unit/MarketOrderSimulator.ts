@@ -7,6 +7,7 @@ import {
   entryPointHash,
 } from "@midnight-ntwrk/compact-runtime"
 import { Contract, ledger, type Witnesses } from "../../dist/marketorder/contract/index.js"
+import { computeOwnerCommitment } from "../ownerCommitment"
 
 type CoinInfo = {
   nonce: Uint8Array
@@ -94,11 +95,7 @@ export class MarketOrderSimulator {
   }
 
   ownerCommitment() {
-    return (
-      this.contract as Contract & {
-        _persistentHash_0(value: [Uint8Array, Uint8Array]): Uint8Array
-      }
-    )._persistentHash_0([encodeContractAddress(marketOrderContractAddress), ownerSecret])
+    return computeOwnerCommitment(marketOrderContractAddress, ownerSecret)
   }
 
   currentLedger() {

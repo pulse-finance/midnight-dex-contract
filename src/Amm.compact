@@ -44,6 +44,7 @@ export ledger yLiquidity: Uint<128>;
 
 export ledger lpCirculatingSupply: Uint<128>;
 
+export ledger initialized: Boolean;
 export ledger slots: Map<Uint<14>, AmmOrder>;
 export ledger active: Maybe<ActiveOrder>;
 
@@ -96,10 +97,11 @@ export circuit AmmInitXYLiq(
     lpOut: Uint<64>,
     recipient: Either<ZswapCoinPublicKey, ContractAddress>
 ): [] {
-    assert(lpCirculatingSupply == 0, "Already initialized");
+    assert(!initialized, "Already initialized");
     assert(lpOut*lpOut <= xIn*yIn, "Too many LP tokens taken");
 
     batcherCommitment = disclose(generateBatcherCommitment());
+    initialized = true;
 
     // mint and send lp tokens to recipient (shielded)
     lpCirculatingSupply = disclose(lpOut);
@@ -151,6 +153,7 @@ export circuit AmmPlaceOrder(
     const sndAmount = disclose(sndAmount_);
     const returnsTo = disclose(returnsTo_);
 
+    assert(initialized, "Not yet initialized");
     assert(slot > 0, "Slot 0 is reserved");
     assert(!slots.member(slot), "Order slot already occupied");
     assert(!coins.member(slot*4), "First coin slot already occupied");
@@ -409,14 +412,14 @@ export circuit AmmValidateDepositXYLiq(
         const xLhsUpper = (disclose(lpOut) + 1) * xLiquidity;
         const xRhs = xIn * lpCirculatingSupply;
 
-        assert(xLhsLower <= xRhs, "Too many LP tokens taken (bound by xIn)");
+        assert(xLhsLower < xRhs, "Too many LP tokens taken (bound by xIn)");
         assert(xLhsUpper >= xRhs, "Too little LP tokens minted");
     } else {
         const yLhsLower = disclose(lpOut) * yLiquidity;
         const yLhsUpper = (disclose(lpOut) + 1) * yLiquidity;
         const yRhs = yIn * lpCirculatingSupply;
 
-        assert(yLhsLower <= yRhs, "Too many LP tokens taken (bound by yIn)");
+        assert(yLhsLower < yRhs, "Too many LP tokens taken (bound by yIn)");
         assert(yLhsUpper >= yRhs, "Too little LP tokens minted");
     }
 
@@ -457,7 +460,7 @@ export circuit AmmValidateDepositXLiq(
         assert(xFee == 0, "Fee too high");
     } else {
         assert((xFee - 1) * 10000 <= xSwap * feeBps, "Fee too high");
-        assert(xFee * 10000 >= xSwap * feeBps, "Fee too low");
+        assert(xFee * 10000 > xSwap * feeBps, "Fee too low");
     }
 
     const xLiqAfterSwap = xLiquidity + disclose(xSwap - xFee) as Uint<128>;
@@ -468,7 +471,7 @@ export circuit AmmValidateDepositXLiq(
     const swapKUpper = calcK(xLiqAfterSwap, yLiqAfterSwap);
 
     assert(swapKLower <= initialK, "Post-swap k is too high");
-    assert(swapKUpper >= initialK, "Post-swap k is lower than initial k");
+    assert(swapKUpper > initialK, "Post-swap k is lower than initial k");
 
     const xLiqAddedAfterSwap = disclose(xIn - xSwap);
     const yLiqAddedAfterSwap = disclose(ySwap);
@@ -485,7 +488,7 @@ export circuit AmmValidateDepositXLiq(
     const xLhsUpper = (disclose(lpOut) + 1) * xLiqAfterSwap;
     const xRhs = xLiqAddedAfterSwap * lpCirculatingSupply;
 
-    assert(xLhsLower <= xRhs, "Too many LP tokens taken");
+    assert(xLhsLower < xRhs, "Too many LP tokens taken");
     assert(xLhsUpper >= xRhs, "Too little LP tokens minted");
 
     lpCirculatingSupply = lpCirculatingSupply + disclose(lpOut) as Uint<128>;
@@ -523,7 +526,7 @@ export circuit AmmValidateDepositYLiq(
         assert(xFee == 0, "Fee too high");
     } else {
         assert((xFee - 1) * (10000 - feeBps) <= xSwap * feeBps, "Fee too high");
-        assert(xFee * (10000 - feeBps) >= xSwap * feeBps, "Fee too low");
+        assert(xFee * (10000 - feeBps) > xSwap * feeBps, "Fee too low");
     }
     
     const xLiqAfterSwap = xLiquidity - disclose(xSwap + xFee);
@@ -534,7 +537,7 @@ export circuit AmmValidateDepositYLiq(
     const swapKUpper = calcK(xLiqAfterSwap, yLiqAfterSwap);
 
     assert(swapKLower <= initialK, "Post-swap k is too high");  
-    assert(swapKUpper >= initialK, "Post-swap k is lower than initial k");
+    assert(swapKUpper > initialK, "Post-swap k is lower than initial k");
 
     const xLiqAddedAfterSwap = disclose(xSwap);
     const yLiqAddedAfterSwap = disclose(yIn - ySwap);
@@ -551,7 +554,7 @@ export circuit AmmValidateDepositYLiq(
     const yLhsUpper = (disclose(lpOut) + 1) * yLiqAfterSwap;
     const yRhs = yLiqAddedAfterSwap * lpCirculatingSupply;
 
-    assert(yLhsLower <= yRhs, "Too many LP tokens minted (bound by y)");
+    assert(yLhsLower < yRhs, "Too many LP tokens minted (bound by y)");
     assert(yLhsUpper >= yRhs, "Too little LP token minted");
 
     lpCirculatingSupply = lpCirculatingSupply + disclose(lpOut) as Uint<128>;
@@ -588,7 +591,7 @@ export circuit AmmValidateSwapXToY(
         assert(xFee == 0, "Fee too high");
     } else {
         assert((xFee - 1) * 10000 <= xIn * feeBps, "Fee too high");
-        assert(xFee * 10000 >= xIn * feeBps, "Fee too low");
+        assert(xFee * 10000 > xIn * feeBps, "Fee too low");
     }
     
     const newXLiquidity = xLiquidity + disclose(xIn - xFee) as Uint<128>;
@@ -599,7 +602,7 @@ export circuit AmmValidateSwapXToY(
     const finalKLower = calcK(newXLiquidity, newYLiquidity - 1);
 
     assert(finalKLower <= initialK, "Final k too large, yOut too small");
-    assert(finalKUpper >= initialK, "Final k smaller than initial k");
+    assert(finalKUpper > initialK, "Final k smaller than initial k");
 
     xRewards = xRewards + disclose(xFee) as Uint<128>;
     xLiquidity = newXLiquidity;
@@ -632,7 +635,7 @@ export circuit AmmValidateSwapYToX(
         assert(xFee == 0, "Fee too high");
     } else {
         assert((xFee - 1) * (10000 - feeBps) <= xOut * feeBps, "Fee too high");
-        assert(xFee * (10000 - feeBps) >= xOut * feeBps, "Fee too low");
+        assert(xFee * (10000 - feeBps) > xOut * feeBps, "Fee too low");
     }
 
     const yIn = order.sndAmount;
@@ -645,7 +648,7 @@ export circuit AmmValidateSwapYToX(
     const finalKLower = calcK(newXLiquidity - 1, newYLiquidity);
 
     assert(finalKLower <= initialK, "Final k too large, not enough xOut");
-    assert(finalKUpper >= initialK, "Final k smaller than initial k");
+    assert(finalKUpper > initialK, "Final k smaller than initial k");
 
     xRewards = xRewards + disclose(xFee) as Uint<128>;
     xLiquidity = newXLiquidity;
@@ -680,14 +683,14 @@ export circuit AmmValidateWithdrawXYLiq(
     const xLhsUpper = (xOut + 1) * lpCirculatingSupply;
     const xRhs = lpIn * xLiquidity;
 
-    assert(xLhsLower <= xRhs, "Too many X tokens taken");
+    assert(xLhsLower < xRhs, "Too many X tokens taken");
     assert(xLhsUpper >= xRhs, "Now enough X tokens taken");
     
     const yLhsLower = yOut * lpCirculatingSupply;
     const yLhsUpper = (yOut + 1) * lpCirculatingSupply;
     const yRhs = lpIn * yLiquidity;
 
-    assert(yLhsLower <= yRhs, "Too many Y tokens taken");
+    assert(yLhsLower < yRhs, "Too many Y tokens taken");
     assert(yLhsUpper >= yRhs, "Not enough Y tokens taken");
 
     lpCirculatingSupply = lpCirculatingSupply - disclose(lpIn);
@@ -733,21 +736,21 @@ export circuit AmmValidateWithdrawXLiq(
     const xRemoveLhsUpper = (xLiqRemovedBeforeSwap + 1) * lpCirculatingSupply;
     const xRemoveRhs = lpIn * xLiquidity;
 
-    assert(xRemoveLhsLower <= xRemoveRhs, "Too many X tokens taken");
+    assert(xRemoveLhsLower < xRemoveRhs, "Too many X tokens taken");
     assert(xRemoveLhsUpper >= xRemoveRhs, "Not enough X tokens taken");
 
     const yRemoveLhsLower = yLiqRemovedBeforeSwap * lpCirculatingSupply;
     const yRemoveLhsUpper = (yLiqRemovedBeforeSwap + 1) * lpCirculatingSupply;
     const yRemoveRhs = lpIn * yLiquidity;
 
-    assert(yRemoveLhsLower <= yRemoveRhs, "Too many Y tokens taken");
+    assert(yRemoveLhsLower < yRemoveRhs, "Too many Y tokens taken");
     assert(yRemoveLhsUpper >= yRemoveRhs, "Not enough Y tokens taken");
 
     if (feeBps == 0) {
         assert(xFee == 0, "Fee too high");
     } else {
         assert((xFee - 1) * (10000 - feeBps) <= xSwap * feeBps, "Fee too high");
-        assert(xFee * (10000 - feeBps) >= xSwap * feeBps, "Fee too low");
+        assert(xFee * (10000 - feeBps) > xSwap * feeBps, "Fee too low");
     }
 
     const xLiquidityBeforeSwap = xLiquidity - xLiqRemovedBeforeSwap;
@@ -760,7 +763,7 @@ export circuit AmmValidateWithdrawXLiq(
     const postSwapKUpper = calcK(xLiqAfterSwap, yLiqAfterSwap);
 
     assert(postSwapKLower <= preSwapK, "Post-swap k is too high");
-    assert(postSwapKUpper >= preSwapK, "Post-swap k is lower than pre-swap k");
+    assert(postSwapKUpper > preSwapK, "Post-swap k is lower than pre-swap k");
     
     lpCirculatingSupply = lpCirculatingSupply - disclose(lpIn);
     xRewards = xRewards + disclose(xFee) as Uint<128>;
@@ -799,21 +802,21 @@ export circuit AmmValidateWithdrawYLiq(
     const xRemoveLhsUpper = (xLiqRemovedBeforeSwap + 1) * lpCirculatingSupply;
     const xRemoveRhs = lpIn * xLiquidity;
 
-    assert(xRemoveLhsLower <= xRemoveRhs, "Too many X tokens taken");
+    assert(xRemoveLhsLower < xRemoveRhs, "Too many X tokens taken");
     assert(xRemoveLhsUpper >= xRemoveRhs, "Too few X tokens taken");
 
     const yRemoveLhsLower = yLiqRemovedBeforeSwap * lpCirculatingSupply;
     const yRemoveLhsUpper = (yLiqRemovedBeforeSwap + 1) * lpCirculatingSupply;
     const yRemoveRhs = lpIn * yLiquidity;
 
-    assert(yRemoveLhsLower <= yRemoveRhs, "Too many Y tokens taken");
+    assert(yRemoveLhsLower < yRemoveRhs, "Too many Y tokens taken");
     assert(yRemoveLhsUpper >= yRemoveRhs, "Too few Y tokens taken");
 
     if (feeBps == 0) {
         assert(xFee == 0, "Fee too high");
     } else {
         assert((xFee - 1) * 10000 <= xSwap * feeBps, "Fee too high");
-        assert(xFee * 10000 >= xSwap * feeBps, "Fee too low");
+        assert(xFee * 10000 > xSwap * feeBps, "Fee too low");
     }
 
     const xLiqBeforeSwap = xLiquidity - xLiqRemovedBeforeSwap;
@@ -826,7 +829,7 @@ export circuit AmmValidateWithdrawYLiq(
     const postSwapKUpper = calcK(xLiqAfterSwap, yLiqAfterSwap);
 
     assert(postSwapKLower <= preSwapK, "Post-swap k is too high");
-    assert(postSwapKUpper >= preSwapK, "Post-swap k is lower than pre-swap k");
+    assert(postSwapKUpper > preSwapK, "Post-swap k is lower than pre-swap k");
 
     lpCirculatingSupply = lpCirculatingSupply - disclose(lpIn);
     xLiquidity = xLiquidity - disclose(xFee);

@@ -101,7 +101,7 @@ describe("liquidity init/add/remove without swaps", () => {
   })
 
   it("LP supply increases after adding balanced liquidity", () => {
-    expect(simulator.getLPCirculatingSupply()).toBe(1900n)
+    expect(simulator.getLPCirculatingSupply()).toBe(1899n)
   })
 
   it("X liquidity increases after adding balanced liquidity", () => {
@@ -141,7 +141,7 @@ describe("liquidity init/add/remove without swaps", () => {
   })
 
   it("LP supply decreases by the burned amount after removal", () => {
-    expect(simulator.getLPCirculatingSupply()).toBe(1400n)
+    expect(simulator.getLPCirculatingSupply()).toBe(1399n)
   })
 
   it("X liquidity decreases by the withdrawn amount after removal", () => {
@@ -168,7 +168,7 @@ describe("init liquidity with an X to Y swap", () => {
 
   it("fails to swap X to Y if yOut is too high", () => {
     expect(() => {
-      simulator.swapXToY({ xIn: 1000n, xFee: 1n, yOut: 1997n })
+      simulator.swapXToY({ xIn: 1000n, xFee: 2n, yOut: 1995n })
     }).toThrow(/Final k smaller than initial k/)
   })
 
@@ -177,15 +177,15 @@ describe("init liquidity with an X to Y swap", () => {
   })
 
   it("X liquidity includes the swap input less fees", () => {
-    expect(simulator.getXLiquidity()).toBe(1_000_999n)
+    expect(simulator.getXLiquidity()).toBe(1_000_998n)
   })
 
   it("X rewards include the swap fee", () => {
-    expect(simulator.getXRewards()).toBe(1n)
+    expect(simulator.getXRewards()).toBe(2n)
   })
 
   it("Y liquidity is reduced by the swap output", () => {
-    expect(simulator.getYLiquidity()).toBe(1_998_004n)
+    expect(simulator.getYLiquidity()).toBe(1_998_006n)
   })
 
   it("can reward treasury", () => {
@@ -296,13 +296,13 @@ describe("zap liquidity paths", () => {
     })
     simulator.zapOutX({
       lpIn: 1000n,
-      xOut: 1998n,
-      ySwap: 1000n,
+      xOut: 1996n,
+      ySwap: 999n,
       xFee: 1n,
-      xSwap: 998n,
+      xSwap: 997n,
     })
 
-    expect(simulator.getXLiquidity()).toBe(998_001n)
+    expect(simulator.getXLiquidity()).toBe(998_003n)
     expect(simulator.getYLiquidity()).toBe(1_000_000n)
     expect(simulator.getXRewards()).toBe(1n)
     expect(simulator.getLPCirculatingSupply()).toBe(999_000n)
@@ -318,14 +318,14 @@ describe("zap liquidity paths", () => {
     })
     simulator.zapOutY({
       lpIn: 1000n,
-      yOut: 1998n,
-      xSwap: 1000n,
+      yOut: 1996n,
+      xSwap: 999n,
       xFee: 1n,
-      ySwap: 998n,
+      ySwap: 997n,
     })
 
     expect(simulator.getXLiquidity()).toBe(999_999n)
-    expect(simulator.getYLiquidity()).toBe(998_002n)
+    expect(simulator.getYLiquidity()).toBe(998_004n)
     expect(simulator.getXRewards()).toBe(1n)
     expect(simulator.getLPCirculatingSupply()).toBe(999_000n)
   })
@@ -623,7 +623,7 @@ describe("AMM assertion failures", () => {
     const simulator = initialized()
 
     simulator.startWithdrawXY({ lpIn: 100n })
-    simulator.validateWithdrawXY({ xOut: 100n, yOut: 100n })
+    simulator.validateWithdrawXY({ xOut: 99n, yOut: 99n })
 
     expect(() => simulator.sendY()).toThrow(/Must pay X before paying Y/)
 
@@ -793,8 +793,8 @@ describe("AMM assertion failures", () => {
     simulator.startWithdrawX({ lpIn: 100n })
     expect(() =>
       simulator.validateWithdrawX({
-        xOut: 100n,
-        ySwap: 101n,
+        xOut: 99n,
+        ySwap: 100n,
         xFee: 0n,
         xSwap: 0n,
       }),
@@ -806,10 +806,10 @@ describe("AMM assertion failures", () => {
     simulator.startWithdrawX({ lpIn: 100n })
     expect(() =>
       simulator.validateWithdrawX({
-        xOut: 2100n,
-        ySwap: 100n,
+        xOut: 1099n,
+        ySwap: 99n,
         xFee: 1n,
-        xSwap: 2000n,
+        xSwap: 1000n,
       }),
     ).toThrow(/Fee too low/)
   })
@@ -819,10 +819,10 @@ describe("AMM assertion failures", () => {
     simulator.startWithdrawX({ lpIn: 100n })
     expect(() =>
       simulator.validateWithdrawX({
-        xOut: 200n,
-        ySwap: 100n,
+        xOut: 188n,
+        ySwap: 99n,
         xFee: 1n,
-        xSwap: 100n,
+        xSwap: 89n,
       }),
     ).toThrow(/Post-swap k is lower than pre-swap k/)
   })
@@ -845,8 +845,8 @@ describe("AMM assertion failures", () => {
     simulator.startWithdrawY({ lpIn: 100n })
     expect(() =>
       simulator.validateWithdrawY({
-        yOut: 101n,
-        xSwap: 100n,
+        yOut: 100n,
+        xSwap: 99n,
         xFee: 0n,
         ySwap: 0n,
       }),
@@ -863,9 +863,9 @@ describe("AMM assertion failures", () => {
     expect(() =>
       simulator.validateWithdrawY({
         yOut: 4050n,
-        xSwap: 2000n,
+        xSwap: 1999n,
         xFee: 1n,
-        ySwap: 50n,
+        ySwap: 51n,
       }),
     ).toThrow(/Fee too low/)
   })
@@ -875,10 +875,10 @@ describe("AMM assertion failures", () => {
     simulator.startWithdrawY({ lpIn: 100n })
     expect(() =>
       simulator.validateWithdrawY({
-        yOut: 200n,
-        xSwap: 100n,
+        yOut: 188n,
+        xSwap: 99n,
         xFee: 1n,
-        ySwap: 100n,
+        ySwap: 89n,
       }),
     ).toThrow(/Post-swap k is lower than pre-swap k/)
   })
@@ -917,18 +917,20 @@ describe("AMM assertion failures", () => {
     ).not.toThrow()
   })
 
-  it("allows an X-to-Y swap that produces no Y change", () => {
+  it("rejects an X-to-Y swap that produces no Y change in a nonzero-fee pool", () => {
     const simulator = initialized({ xIn: 1n, yIn: 1n, lpOut: 1n })
     simulator.startSwapXToY({ xIn: 1n })
-    expect(() => simulator.validateSwapXToY({ xFee: 1n, yOut: 0n })).not.toThrow()
-    expect(() => simulator.sendY()).not.toThrow()
+    expect(() => simulator.validateSwapXToY({ xFee: 1n, yOut: 0n })).toThrow(
+      /Final k smaller than initial k/,
+    )
   })
 
-  it("rejects X split when the reserve coin would have no change", () => {
+  it("rejects full-reserve two-sided withdrawals before split", () => {
     const simulator = initialized()
     simulator.startWithdrawXY({ lpIn: 1000n })
-    simulator.validateWithdrawXY({ xOut: 1000n, yOut: 1000n })
-    expect(() => simulator.sendX()).toThrow(/Some changes expected/)
+    expect(() => simulator.validateWithdrawXY({ xOut: 1000n, yOut: 1000n })).toThrow(
+      /Too many X tokens taken/,
+    )
   })
 
   it("surfaces map lookup failures when an X merge coin is missing", () => {
@@ -958,7 +960,7 @@ describe("AMM assertion failures", () => {
       lpOut: 1_000_000n,
     })
     simulator.startSwapXToY({ xIn: 1000n })
-    expect(() => simulator.validateSwapXToY({ xFee: 1n, yOut: 0n })).toThrow(
+    expect(() => simulator.validateSwapXToY({ xFee: 2n, yOut: 0n })).toThrow(
       /Final k too large, yOut too small/,
     )
   })
@@ -1022,7 +1024,7 @@ describe("AMM assertion failures", () => {
     expect(() =>
       simulator.validateDepositX({
         xSwap: 1000n,
-        xFee: 1n,
+        xFee: 2n,
         ySwap: 0n,
         lpOut: 0n,
       }),
@@ -1120,8 +1122,8 @@ describe("AMM assertion failures", () => {
     simulator.startWithdrawX({ lpIn: 1000n })
     expect(() =>
       simulator.validateWithdrawX({
-        xOut: 1001n,
-        ySwap: 2000n,
+        xOut: 1000n,
+        ySwap: 1999n,
         xFee: 1n,
         xSwap: 1n,
       }),
@@ -1137,7 +1139,7 @@ describe("AMM assertion failures", () => {
     simulator.startWithdrawX({ lpIn: 1000n })
     expect(() =>
       simulator.validateWithdrawX({
-        xOut: 1000n,
+        xOut: 999n,
         ySwap: 0n,
         xFee: 0n,
         xSwap: 0n,
@@ -1166,8 +1168,8 @@ describe("AMM assertion failures", () => {
     simulator.startWithdrawY({ lpIn: 1000n })
     expect(() =>
       simulator.validateWithdrawY({
-        yOut: 2001n,
-        xSwap: 1000n,
+        yOut: 2000n,
+        xSwap: 999n,
         xFee: 1n,
         ySwap: 1n,
       }),
@@ -1277,10 +1279,10 @@ describe("zero-fee pools", () => {
     withdrawX.startWithdrawX({ lpIn: 1000n })
     expect(() =>
       withdrawX.validateWithdrawX({
-        xOut: 1998n,
-        ySwap: 1000n,
+        xOut: 1996n,
+        ySwap: 999n,
         xFee: 1n,
-        xSwap: 998n,
+        xSwap: 997n,
       }),
     ).toThrow(/Fee too high/)
 
@@ -1293,10 +1295,10 @@ describe("zero-fee pools", () => {
     withdrawY.startWithdrawY({ lpIn: 1000n })
     expect(() =>
       withdrawY.validateWithdrawY({
-        yOut: 1997n,
+        yOut: 1996n,
         xSwap: 999n,
         xFee: 1n,
-        ySwap: 998n,
+        ySwap: 997n,
       }),
     ).toThrow(/Fee too high/)
   })

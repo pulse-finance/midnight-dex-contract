@@ -269,4 +269,5 @@ circuit assertOnlyOwner(): [] {
 circuit reset(): [] {
     state = BurnLpOrderState.Empty;
     order = default<BurnLpOrder>;
+    ammSlot = 0;
 }

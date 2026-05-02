@@ -178,7 +178,16 @@ export class AmmSimulator {
 
   addLiquidity({ xIn, yIn, lpOut }: { xIn: bigint; yIn: bigint; lpOut?: bigint }) {
     this.runAtomically(() => {
-      lpOut = lpOut ?? BigInt(Math.round(Math.sqrt(Number(xIn) * Number(yIn))))
+      if (lpOut === undefined) {
+        const xBound = xIn * this.getYLiquidity()
+        const yBound = yIn * this.getXLiquidity()
+
+        if (xBound < yBound) {
+          lpOut = (xIn * this.getLPCirculatingSupply() - 1n) / this.getXLiquidity()
+        } else {
+          lpOut = (yIn * this.getLPCirculatingSupply() - 1n) / this.getYLiquidity()
+        }
+      }
 
       const nonce = this.makeNonce()
 
@@ -787,54 +796,39 @@ export class AmmSimulator {
 
   private calcSwapXToYFee(xIn: bigint): bigint {
     const feeBps = this.getFeeBps()
-    let xFee = BigInt(Math.round((Number(xIn) * Number(feeBps)) / 10000))
-
-    while (xFee * 10000n < feeBps * xIn) {
-      xFee += 1n
-    }
-
-    return xFee
+    return feeBps === 0n ? 0n : (xIn * feeBps) / 10000n + 1n
   }
 
   private calcSwapXToYOut(xIn: bigint, xFee: bigint): bigint {
     const initialK = this.xReserves.value * this.yReserves.value
+    const newXLiquidity = this.xReserves.value + xIn - xFee
+    const minimumRemainingY = initialK / newXLiquidity + 1n
 
-    let yOut =
-      this.yReserves.value -
-      BigInt(Math.round(Number(initialK) / Number(this.xReserves.value + xIn - xFee)))
-
-    while (initialK > (this.yReserves.value - yOut) * (this.xReserves.value + xIn - xFee)) {
-      yOut -= 1n
-    }
-
-    return yOut
+    return this.yReserves.value - minimumRemainingY
   }
 
   private calcSwapYToXFee(xOut: bigint): bigint {
     const feeBps = this.getFeeBps()
-    let xFee = BigInt(Math.round((Number(xOut) * Number(feeBps)) / (10000 - Number(feeBps))))
-
-    while (xFee * (10000n - feeBps) < feeBps * xOut) {
-      xFee += 1n
-    }
-
-    return xFee
+    return feeBps === 0n ? 0n : (xOut * feeBps) / (10000n - feeBps) + 1n
   }
 
   private calcSwapYToXOut(yIn: bigint): bigint {
     const initialK = this.xReserves.value * this.yReserves.value
+    const newYLiquidity = this.yReserves.value + yIn
+    let xOut = this.xReserves.value - initialK / newYLiquidity - 1n
 
-    let xOutWithoutFee =
-      this.xReserves.value -
-      BigInt(Math.round(Number(initialK) / Number(this.yReserves.value + yIn)))
+    while (xOut > 0n) {
+      const xFee = this.calcSwapYToXFee(xOut)
+      const newXLiquidity = this.xReserves.value - xOut - xFee
 
-    while (initialK > (this.xReserves.value - xOutWithoutFee) * (this.yReserves.value + yIn)) {
-      xOutWithoutFee -= 1n
+      if (newXLiquidity * newYLiquidity > initialK) {
+        return xOut
+      }
+
+      xOut -= 1n
     }
 
-    const xFee = this.calcSwapXToYFee(xOutWithoutFee)
-
-    return xOutWithoutFee - xFee
+    return 0n
   }
 
   currentLedger() {

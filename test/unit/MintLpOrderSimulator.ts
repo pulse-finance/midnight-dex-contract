@@ -7,6 +7,7 @@ import {
   entryPointHash,
 } from "@midnight-ntwrk/compact-runtime"
 import { Contract, ledger, type Witnesses } from "../../dist/mintlporder/contract/index.js"
+import { computeOwnerCommitment } from "../ownerCommitment"
 
 type CoinInfo = {
   nonce: Uint8Array
@@ -98,11 +99,7 @@ export class MintLpOrderSimulator {
   }
 
   ownerCommitment() {
-    return (
-      this.contract as Contract & {
-        _persistentHash_1(value: [Uint8Array, Uint8Array]): Uint8Array
-      }
-    )._persistentHash_1([encodeContractAddress(mintLpContractAddress), mintLpOwnerSecret])
+    return computeOwnerCommitment(mintLpContractAddress, mintLpOwnerSecret)
   }
 
   currentLedger() {

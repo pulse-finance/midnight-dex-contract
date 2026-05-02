@@ -24,7 +24,7 @@ describe("MintLpOrder", () => {
 
     expect(() => simulator.sendToAmm()).toThrow(/Unexpected MarketOrder state/)
     expect(() => simulator.receiveFromAmm()).toThrow(/Unexpected MintLpOrder state/)
-    expect(() => simulator.close()).toThrow(/Can only be performed by the order owner/)
+    expect(() => simulator.close()).toThrow(/Unexpected MintLpOrder state/)
 
     simulator.openOrder()
     expect(() => simulator.openOrder()).toThrow(/MintLpOrder state not empty/)
